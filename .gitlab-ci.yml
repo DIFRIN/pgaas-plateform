@@ -1,0 +1,120 @@
+stages:
+  - prepare
+  - validate
+  - package
+  - publish
+
+variables:
+  ARTIFACT_NAME: pgaas
+
+# ------------------------------------------------------------------------------
+# Prepare
+# ------------------------------------------------------------------------------
+derive-version:
+  stage: prepare
+  script:
+    - |
+      if [[ "$CI_COMMIT_TAG" =~ ^v ]]; then
+        VERSION="${CI_COMMIT_TAG#v}"
+        IS_RELEASE="true"
+      else
+        SHORT_SHA=$(echo "$CI_COMMIT_SHA" | cut -c1-7)
+        VERSION="0.0.0-${CI_COMMIT_REF_SLUG}.${SHORT_SHA}"
+        IS_RELEASE="false"
+      fi
+      echo "VERSION=${VERSION}" >> version.env
+      echo "IS_RELEASE=${IS_RELEASE}" >> version.env
+      echo "Version: ${VERSION} (release: ${IS_RELEASE})"
+  artifacts:
+    reports:
+      dotenv: version.env
+
+# ------------------------------------------------------------------------------
+# Validate (parallel)
+# ------------------------------------------------------------------------------
+check-tools:
+  stage: validate
+  needs: [derive-version]
+  script:
+    - make check-tools
+
+preview:
+  stage: validate
+  needs: [derive-version]
+  script:
+    - make preview
+
+# ------------------------------------------------------------------------------
+# Package (tag only)
+# ------------------------------------------------------------------------------
+package:
+  stage: package
+  needs: [derive-version, check-tools, preview]
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  script:
+    - mkdir -p build
+    - |
+      zip -r "build/${ARTIFACT_NAME}-${VERSION}.zip" \
+        scripts/ core/ confs/admin/ manifests/ helmfile.yaml Makefile \
+        -x '*.git*' \
+        -x 'confs/_generated/*' \
+        -x 'confs/admin/local/*'
+  artifacts:
+    paths:
+      - build/
+
+# ------------------------------------------------------------------------------
+# Publish (tag only)
+# ------------------------------------------------------------------------------
+#
+# Option A: Manual Vault AppRole flow (uses CI/CD variables VAULT_ROLE_ID,
+#           VAULT_SECRET_ID, VAULT_ADDR, ARTIFACTORY_URL)
+#
+# Option B: Native GitLab Vault integration — if your runner is configured with
+#           secrets:vault:, replace this job with:
+#
+#   publish:
+#     stage: publish
+#     needs: [package]
+#     rules:
+#       - if: '$CI_COMMIT_TAG =~ /^v/'
+#     secrets:
+#       JFROG_TOKEN:
+#         vault: jfrog/deploy/token@secret
+#     script:
+#       - |
+#         curl -sf \
+#           -H "Authorization: Bearer ${JFROG_TOKEN}" \
+#           -T "build/${ARTIFACT_NAME}-${VERSION}.zip" \
+#           "${ARTIFACTORY_URL}/pgaas-generic-local/pgaas/${VERSION}/${ARTIFACT_NAME}-${VERSION}.zip"
+#
+publish:
+  stage: publish
+  needs: [package]
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  script:
+    - |
+      set -euo pipefail
+
+      # Authenticate to Vault via AppRole
+      VAULT_TOKEN=$(curl -sf \
+        --request POST \
+        --data "{\"role_id\": \"${VAULT_ROLE_ID}\", \"secret_id\": \"${VAULT_SECRET_ID}\"}" \
+        "${VAULT_ADDR}/v1/auth/approle/login" \
+        | jq -r '.auth.client_token')
+
+      # Fetch JFrog token from Vault
+      JFROG_TOKEN=$(curl -sf \
+        --header "X-Vault-Token: ${VAULT_TOKEN}" \
+        "${VAULT_ADDR}/v1/secret/data/jfrog/deploy" \
+        | jq -r '.data.data.token')
+
+      # Upload artifact to Artifactory
+      curl -sf \
+        -H "Authorization: Bearer ${JFROG_TOKEN}" \
+        -T "build/${ARTIFACT_NAME}-${VERSION}.zip" \
+        "${ARTIFACTORY_URL}/pgaas-generic-local/pgaas/${VERSION}/${ARTIFACT_NAME}-${VERSION}.zip"
+
+      echo "Published ${ARTIFACT_NAME}-${VERSION}.zip to Artifactory"

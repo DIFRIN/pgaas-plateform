@@ -1,0 +1,46 @@
+# PG major version from admin ImageCatalog
+postgresql:
+  majorVersion: 16
+
+# CNPG plugins this client wants enabled
+plugins:
+  - name: barman-cloud.cloudnative-pg.io
+
+databases:
+  - name: app_db
+    owner: app_user
+    cnPattern: "app_user.ic1.local"
+  - name: reporting_db
+    owner: report_user
+    cnPattern: "report_user.ic1.local"
+
+# Declarative role management (CNPG managed.roles)
+# Cert-only auth: CN in client certificate maps to role name via pg_ident
+roles:
+  - name: app_user
+    ensure: present
+    login: true
+    superuser: false
+    createdb: false
+    inherit: true
+
+  - name: report_user
+    ensure: present
+    login: true
+    superuser: false
+    createdb: false
+    inherit: true
+    inRoles:
+      - pg_read_all_data
+
+  - name: app_readonly
+    ensure: present
+    login: true
+    superuser: false
+    createdb: false
+    inherit: true
+    inRoles:
+      - pg_read_all_data
+    databases:
+      - app_db
+      - reporting_db

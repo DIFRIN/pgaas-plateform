@@ -1,0 +1,34 @@
+{{- if .Values.cnpg.databases }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-pgadmin4-servers
+  labels:
+    app.kubernetes.io/name: pgadmin4
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  servers.json: |
+    {
+      "Servers": {
+        {{- $host := .Values.cnpg.host }}
+        {{- $port := .Values.cnpg.port }}
+        {{- $last := sub (len .Values.cnpg.databases) 1 }}
+        {{- range $i, $db := .Values.cnpg.databases }}
+        "{{ add $i 1 }}": {
+          "Name": "{{ $db.name }}",
+          "Group": "{{ $.Values.cnpg.clusterName }}",
+          "Host": "{{ $host }}",
+          "Port": {{ $port }},
+          "MaintenanceDB": "{{ $db.name }}",
+          "Username": "pgadmin_readonly",
+          "SSLMode": "verify-full",
+          "SSLCert": "/pgadmin4/tls/tls.crt",
+          "SSLKey": "/pgadmin4/tls/tls.key",
+          "SSLRootCert": "/pgadmin4/tls/ca.crt",
+          "Shared": true,
+          "SharedUsername": "pgadmin_readonly"
+        }{{ if ne $i $last }},{{ end }}
+        {{- end }}
+      }
+    }
+{{- end }}

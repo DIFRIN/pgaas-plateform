@@ -1,0 +1,37 @@
+postgresql:
+  majorVersion: 16
+
+plugins:
+  - name: barman-cloud.cloudnative-pg.io
+
+databases:
+  - name: inventory_db
+    owner: inv_user
+    cnPattern: "inv_user.is1.pic"
+  - name: orders_db
+    owner: orders_user
+    cnPattern: "orders_user.is1.pic"
+
+roles:
+  - name: inv_user
+    ensure: present
+    login: true
+    superuser: false
+    createdb: false
+    inherit: true
+
+  - name: orders_user
+    ensure: present
+    login: true
+    superuser: false
+    createdb: false
+    inherit: true
+
+  - name: inv_readonly
+    ensure: present
+    login: true
+    superuser: false
+    createdb: false
+    inherit: true
+    inRoles:
+      - pg_read_all_data

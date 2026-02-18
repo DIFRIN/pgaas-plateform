@@ -1,0 +1,8 @@
+confs/_generated/
+build/
+*.swp
+*.swo
+*~
+.DS_Store
+.claude/
+prompt.txt

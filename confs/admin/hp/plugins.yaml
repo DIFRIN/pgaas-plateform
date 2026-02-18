@@ -1,0 +1,3 @@
+availablePlugins:
+  - name: barman-cloud.cloudnative-pg.io
+    description: Barman Cloud backup via S3-compatible storage

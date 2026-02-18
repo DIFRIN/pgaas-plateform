@@ -1,0 +1,556 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PGaaS Core Chart Values",
+  "description": "Schema for generated values passed to the PGaaS core Helm chart",
+  "type": "object",
+  "required": [
+    "clusterName",
+    "namespace",
+    "ins",
+    "env",
+    "teamEnv",
+    "datacenter",
+    "postgresql",
+    "databases",
+    "roles",
+    "backup",
+    "s3",
+    "isPrimary",
+    "replication"
+  ],
+  "properties": {
+    "clusterName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "CNPG cluster name ({ENV}-{INS})"
+    },
+    "namespace": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Kubernetes namespace ({INS}-{ENV})"
+    },
+    "ins": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+$",
+      "description": "Client INS code"
+    },
+    "env": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+$",
+      "description": "Environment name"
+    },
+    "teamEnv": {
+      "type": "string",
+      "minLength": 1,
+      "enum": ["local", "hp", "perf", "pprod", "prod"],
+      "description": "Resolved team environment (hp for sub-envs)"
+    },
+    "datacenter": {
+      "type": "object",
+      "required": ["name", "dnsSuffix"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Current datacenter name"
+        },
+        "dnsSuffix": {
+          "type": "string",
+          "minLength": 1,
+          "description": "DNS suffix for service FQDNs"
+        }
+      },
+      "additionalProperties": false
+    },
+    "postgresql": {
+      "type": "object",
+      "required": ["majorVersion", "instances", "storage", "resources"],
+      "properties": {
+        "majorVersion": {
+          "type": "integer",
+          "minimum": 13,
+          "maximum": 20,
+          "description": "PostgreSQL major version from admin ImageCatalog"
+        },
+        "instances": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Number of PostgreSQL instances"
+        },
+        "storage": {
+          "type": "object",
+          "required": ["size"],
+          "properties": {
+            "size": {
+              "type": "string",
+              "pattern": "^[0-9]+[KMGT]i$",
+              "description": "Storage size (e.g., 5Gi, 10Gi)"
+            },
+            "storageClass": {
+              "type": "string",
+              "description": "Kubernetes StorageClass name"
+            }
+          },
+          "additionalProperties": false
+        },
+        "resources": {
+          "type": "object",
+          "required": ["requests", "limits"],
+          "properties": {
+            "requests": {
+              "type": "object",
+              "required": ["memory", "cpu"],
+              "properties": {
+                "memory": { "type": "string" },
+                "cpu": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            "limits": {
+              "type": "object",
+              "required": ["memory", "cpu"],
+              "properties": {
+                "memory": { "type": "string" },
+                "cpu": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "parameters": {
+          "type": "object",
+          "description": "PostgreSQL configuration parameters",
+          "additionalProperties": { "type": "string" }
+        },
+        "primaryUpdateStrategy": {
+          "type": "string",
+          "enum": ["unsupervised", "supervised"],
+          "description": "CNPG primary update strategy"
+        },
+        "primaryUpdateMethod": {
+          "type": "string",
+          "enum": ["switchover", "restart"],
+          "description": "CNPG primary update method"
+        }
+      },
+      "additionalProperties": false
+    },
+    "imageCatalog": {
+      "type": "object",
+      "required": ["name", "images"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ImageCatalog resource name"
+        },
+        "images": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["major", "image"],
+            "properties": {
+              "major": {
+                "type": "integer",
+                "minimum": 13,
+                "description": "PostgreSQL major version number"
+              },
+              "image": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Container image reference"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "databases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "owner", "cnPattern"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z_][a-z0-9_]*$",
+            "description": "Database name"
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z_][a-z0-9_]*$",
+            "description": "Database owner role name"
+          },
+          "cnPattern": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Certificate CN pattern for this database owner"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "roles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z_][a-z0-9_]*$",
+            "description": "Role name"
+          },
+          "ensure": {
+            "type": "string",
+            "enum": ["present", "absent"],
+            "default": "present"
+          },
+          "login": {
+            "type": "boolean",
+            "default": true
+          },
+          "superuser": {
+            "type": "boolean",
+            "default": false
+          },
+          "createdb": {
+            "type": "boolean",
+            "default": false
+          },
+          "inherit": {
+            "type": "boolean",
+            "default": true
+          },
+          "connectionLimit": {
+            "type": "integer",
+            "minimum": -1,
+            "description": "Max concurrent connections (-1 for unlimited)"
+          },
+          "inRoles": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Parent roles to inherit from"
+          },
+          "databases": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Databases this non-owner role can access (generates pg_hba rules + client cert)"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "pgadminUser": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "pgAdmin read-only user name"
+        },
+        "roles": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Roles to assign to pgAdmin user"
+        }
+      },
+      "additionalProperties": false
+    },
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "CNPG plugin name"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "backup": {
+      "type": "object",
+      "required": ["schedule", "retentionPolicy"],
+      "properties": {
+        "schedule": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Cron schedule for backups (6-field CNPG cron)"
+        },
+        "retentionPolicy": {
+          "type": "string",
+          "pattern": "^[0-9]+d$",
+          "description": "Backup retention period (e.g., 7d, 30d, 90d)"
+        },
+        "target": {
+          "type": "string",
+          "enum": ["primary", "prefer-standby"],
+          "description": "Backup target preference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "s3": {
+      "type": "object",
+      "required": ["endpoint", "bucket", "destinationPath"],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "description": "S3 endpoint URL for the current datacenter"
+        },
+        "region": {
+          "type": "string",
+          "description": "S3 region"
+        },
+        "bucket": {
+          "type": "string",
+          "minLength": 1,
+          "description": "S3 bucket name"
+        },
+        "destinationPath": {
+          "type": "string",
+          "pattern": "^s3://",
+          "description": "Full S3 destination path for backups"
+        },
+        "credentials": {
+          "type": "object",
+          "description": "S3 credentials (inline or secret reference)",
+          "properties": {
+            "accessKey": {
+              "type": "string",
+              "description": "Inline access key (local env only)"
+            },
+            "secretKey": {
+              "type": "string",
+              "description": "Inline secret key (local env only)"
+            },
+            "secretName": {
+              "type": "string",
+              "description": "Vault-synced K8s secret name (real envs)"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "isPrimary": {
+      "type": "boolean",
+      "description": "Whether this is the primary cluster (true) or replica (false)"
+    },
+    "replication": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether cross-DC replication is enabled"
+        },
+        "primaryDatacenter": {
+          "type": "string",
+          "description": "Name of the primary datacenter"
+        }
+      },
+      "additionalProperties": false
+    },
+    "externalClusters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "barmanObjectStore"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "External cluster name ({clusterName}-{dc})"
+          },
+          "barmanObjectStore": {
+            "type": "object",
+            "required": ["destinationPath"],
+            "properties": {
+              "destinationPath": {
+                "type": "string",
+                "description": "S3 path for replication WAL archive"
+              },
+              "endpointURL": {
+                "type": "string",
+                "description": "S3 endpoint for remote DC"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "certificates": {
+      "type": "object",
+      "properties": {
+        "issuerName": {
+          "type": "string",
+          "default": "pgaas-ca-issuer",
+          "description": "cert-manager issuer name"
+        },
+        "issuerKind": {
+          "type": "string",
+          "enum": ["ClusterIssuer", "Issuer"],
+          "default": "ClusterIssuer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pgadmin4": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "defaultPasswordCreate": {
+          "type": "boolean",
+          "description": "Create default password secret (true for local, false for real envs)"
+        },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "secretName": { "type": "string" },
+            "issuerName": { "type": "string" },
+            "issuerKind": {
+              "type": "string",
+              "enum": ["ClusterIssuer", "Issuer"]
+            },
+            "dnsNames": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "ldap": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "serverUri": {
+              "type": "string",
+              "description": "LDAP server URI (ldap:// or ldaps://)"
+            },
+            "baseDn": { "type": "string" },
+            "searchFilter": { "type": "string" },
+            "bindUser": {
+              "type": "string",
+              "description": "LDAP bind DN for search"
+            },
+            "bindPassword": {
+              "type": "string",
+              "description": "Inline bind password (local env, chart creates secret)"
+            },
+            "bindPasswordSecret": {
+              "type": "string",
+              "description": "K8s secret name containing bind password"
+            },
+            "bindPasswordKey": {
+              "type": "string",
+              "default": "password"
+            }
+          }
+        },
+        "cnpg": {
+          "type": "object",
+          "properties": {
+            "clusterName": { "type": "string" },
+            "host": { "type": "string" },
+            "port": {
+              "type": "integer",
+              "default": 5432
+            },
+            "databases": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            },
+            "tlsSecret": {
+              "type": "string",
+              "description": "Client TLS secret for pgAdmin DB connections"
+            },
+            "caSecret": {
+              "type": "string",
+              "description": "CA secret for verifying server certificates"
+            }
+          },
+          "additionalProperties": false
+        },
+        "ingress": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "host": { "type": "string" }
+          }
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable NetworkPolicy for namespace isolation"
+        },
+        "allowedNamespaces": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional namespaces allowed to access the cluster"
+        },
+        "allowedCIDRs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "CIDR blocks allowed to access the cluster"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rbac": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable RBAC roles and bindings for cluster management"
+        },
+        "adminGroup": {
+          "type": "string",
+          "description": "K8s group for admin access (always bound)"
+        },
+        "clientGroup": {
+          "type": "string",
+          "description": "K8s group for client self-service access (hp/perf only)"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

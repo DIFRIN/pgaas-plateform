@@ -1,0 +1,18 @@
+{{- if .Values.isPrimary }}
+{{- range $i, $db := .Values.databases }}
+{{- if gt $i 0 }}
+---
+{{- end }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: {{ $.Values.clusterName }}-{{ $db.name }}
+  labels:
+    {{- include "pgaas.labels" $ | nindent 4 }}
+spec:
+  name: {{ $db.name }}
+  owner: {{ $db.owner }}
+  cluster:
+    name: {{ include "pgaas.clusterName" $ }}
+{{- end }}
+{{- end }}

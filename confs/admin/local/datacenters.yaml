@@ -1,0 +1,13 @@
+datacenters:
+  local1:
+    kubeContext: cluster1
+    dnsSuffix: svc.cluster.local
+    s3:
+      endpoint: "http://CLUSTER1_IP:SEAWEEDFS_NODEPORT"
+      region: us-east-1
+  local2:
+    kubeContext: cluster2
+    dnsSuffix: svc.cluster.local
+    s3:
+      endpoint: "http://CLUSTER1_IP:SEAWEEDFS_NODEPORT"
+      region: us-east-1

@@ -1,0 +1,56 @@
+image:
+  repository: dpage/pgadmin4
+  tag: "8.13"
+  pullPolicy: IfNotPresent
+
+replicas: 1
+
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 50m
+  limits:
+    memory: 256Mi
+    cpu: 200m
+
+service:
+  type: ClusterIP
+  port: 443
+
+tls:
+  enabled: false
+  secretName: ""
+  issuerName: pgaas-ca-issuer
+  issuerKind: ClusterIssuer
+  dnsNames: []
+
+ingress:
+  enabled: false
+  host: ""
+  annotations: {}
+  tls: []
+
+ldap:
+  enabled: false
+  serverUri: ""
+  baseDn: ""
+  bindUser: ""
+  bindPassword: ""
+  bindPasswordSecret: ""
+  bindPasswordKey: password
+  searchFilter: "(cn={login})"
+  searchBaseScope: "SUBTREE"
+
+defaultEmail: admin@pgaas.local
+defaultPasswordCreate: true
+defaultPasswordSecret: pgadmin-default-password
+defaultPasswordKey: password
+
+# mTLS connection to CNPG cluster
+cnpg:
+  clusterName: ""
+  host: ""
+  port: 5432
+  databases: []
+  tlsSecret: pgadmin_readonly-client-tls
+  caSecret: ""

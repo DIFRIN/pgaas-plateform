@@ -1,0 +1,39 @@
+clients:
+  ic1:
+    datacenters:
+      - dc1
+      - dc2
+    primaryDatacenter: dc1
+    s3Bucket: ic1-prod-backups
+    storageProfile: XXL
+    s3Credentials:
+      secretName: ic1-s3-credentials
+    ldapCredentials:
+      bindDn: "cn=pgadmin-ic1,ou=services,dc=example,dc=com"
+      bindPasswordSecret: ic1-ldap-bind-password
+    replication:
+      enabled: true
+    networkPolicy:
+      allowedNamespaces:
+        - monitoring
+      allowedCIDRs:
+        - "10.0.0.0/8"
+  is1:
+    datacenters:
+      - dc1
+      - dc2
+    primaryDatacenter: dc1
+    s3Bucket: is1-prod-backups
+    storageProfile: L
+    s3Credentials:
+      secretName: is1-s3-credentials
+    ldapCredentials:
+      bindDn: "cn=pgadmin-is1,ou=services,dc=example,dc=com"
+      bindPasswordSecret: is1-ldap-bind-password
+    replication:
+      enabled: true
+    networkPolicy:
+      allowedNamespaces:
+        - monitoring
+      allowedCIDRs:
+        - "10.0.0.0/8"

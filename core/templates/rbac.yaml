@@ -1,0 +1,50 @@
+{{- if .Values.rbac.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pgaas-cluster-manager
+  labels:
+    {{- include "pgaas.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters", "databases", "scheduledbackups"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps", "services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pgaas-admin-binding
+  labels:
+    {{- include "pgaas.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pgaas-cluster-manager
+subjects:
+  - kind: Group
+    name: {{ .Values.rbac.adminGroup }}
+    apiGroup: rbac.authorization.k8s.io
+---
+{{- if .Values.rbac.clientGroup }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pgaas-client-binding
+  labels:
+    {{- include "pgaas.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pgaas-cluster-manager
+subjects:
+  - kind: Group
+    name: {{ .Values.rbac.clientGroup }}
+    apiGroup: rbac.authorization.k8s.io
+{{- end }}
+{{- end }}

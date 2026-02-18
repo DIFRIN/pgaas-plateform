@@ -1,0 +1,6 @@
+apiVersion: v2
+name: openldap
+description: OpenLDAP for local pgAdmin4 authentication
+version: 0.1.0
+appVersion: "2.6"
+type: application

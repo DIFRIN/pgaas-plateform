@@ -1,0 +1,14 @@
+{{- if .Values.imageCatalog.images }}
+apiVersion: postgresql.cnpg.io/v1
+kind: ImageCatalog
+metadata:
+  name: {{ include "pgaas.imageCatalogName" . }}
+  labels:
+    {{- include "pgaas.labels" . | nindent 4 }}
+spec:
+  images:
+    {{- range .Values.imageCatalog.images }}
+    - major: {{ .major }}
+      image: {{ .image }}
+    {{- end }}
+{{- end }}

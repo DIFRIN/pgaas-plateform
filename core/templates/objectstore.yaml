@@ -1,0 +1,31 @@
+{{- if .Values.s3.endpoint }}
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: {{ include "pgaas.clusterName" . }}-object-store
+  labels:
+    {{- include "pgaas.labels" . | nindent 4 }}
+spec:
+  configuration:
+    destinationPath: {{ .Values.s3.destinationPath }}
+    endpointURL: {{ .Values.s3.endpoint }}
+    s3Credentials:
+      {{- if .Values.s3.credentials.secretName }}
+      # Vault-synced secret (real envs)
+      accessKeyId:
+        name: {{ .Values.s3.credentials.secretName }}
+        key: accessKey
+      secretAccessKey:
+        name: {{ .Values.s3.credentials.secretName }}
+        key: secretKey
+      {{- else }}
+      # Inline credentials (local env)
+      accessKeyId:
+        name: {{ include "pgaas.s3SecretName" . }}
+        key: accessKey
+      secretAccessKey:
+        name: {{ include "pgaas.s3SecretName" . }}
+        key: secretKey
+      {{- end }}
+      region: {{ .Values.s3.region }}
+{{- end }}

@@ -1,0 +1,164 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "pgaas.clusterName" . }}
+  labels:
+    {{- include "pgaas.labels" . | nindent 4 }}
+spec:
+  # Image via ImageCatalog reference (version declared by admin, selected by user)
+  imageCatalogRef:
+    apiGroup: postgresql.cnpg.io
+    kind: ImageCatalog
+    name: {{ include "pgaas.imageCatalogName" . }}
+    major: {{ .Values.postgresql.majorVersion }}
+
+  instances: {{ .Values.postgresql.instances }}
+
+  primaryUpdateStrategy: {{ .Values.postgresql.primaryUpdateStrategy | default "unsupervised" }}
+  primaryUpdateMethod: {{ .Values.postgresql.primaryUpdateMethod | default "switchover" }}
+
+  storage:
+    size: {{ .Values.postgresql.storage.size }}
+    {{- if .Values.postgresql.storage.storageClass }}
+    storageClassName: {{ .Values.postgresql.storage.storageClass }}
+    {{- end }}
+
+  resources:
+    requests:
+      memory: {{ .Values.postgresql.resources.requests.memory }}
+      cpu: {{ .Values.postgresql.resources.requests.cpu }}
+    limits:
+      memory: {{ .Values.postgresql.resources.limits.memory }}
+      cpu: {{ .Values.postgresql.resources.limits.cpu }}
+
+  postgresql:
+    {{- if .Values.postgresql.parameters }}
+    parameters:
+      {{- range $key, $val := .Values.postgresql.parameters }}
+      {{ $key }}: {{ $val | quote }}
+      {{- end }}
+    {{- end }}
+    # Per-database TLS client cert authentication with ident mapping
+    pg_hba:
+      {{- range .Values.databases }}
+      - hostssl {{ .name }} {{ .owner }} all cert map=pgaas
+      {{- end }}
+      {{- range $role := .Values.roles }}
+      {{- if $role.databases }}
+      {{- range $dbName := $role.databases }}
+      - hostssl {{ $dbName }} {{ $role.name }} all cert map=pgaas
+      {{- end }}
+      {{- end }}
+      {{- end }}
+      {{- if .Values.pgadminUser }}
+      - hostssl all {{ .Values.pgadminUser.name }} all cert map=pgaas
+      {{- end }}
+      - local all all peer
+    pg_ident:
+      {{- range .Values.databases }}
+      - pgaas {{ .owner }} {{ .owner }}
+      {{- end }}
+      {{- range .Values.roles }}
+      {{- if .databases }}
+      - pgaas {{ .name }} {{ .name }}
+      {{- end }}
+      {{- end }}
+      {{- if .Values.pgadminUser }}
+      - pgaas {{ .Values.pgadminUser.name }} {{ .Values.pgadminUser.name }}
+      {{- end }}
+
+  # Enable TLS for all connections
+  enableSuperuserAccess: false
+
+  # Bootstrap — replicas use WAL recovery; primary uses CNPG default (initdb)
+  {{- if not .Values.isPrimary }}
+  bootstrap:
+    recovery:
+      source: {{ include "pgaas.clusterName" . }}-{{ .Values.replication.primaryDatacenter }}
+  {{- end }}
+
+  # TLS configuration - root CA directly (no namespace intermediate)
+  certificates:
+    serverTLSSecret: {{ include "pgaas.serverCertName" . }}
+    serverCASecret: pgaas-root-ca
+    clientCASecret: pgaas-root-ca
+
+  # Declarative role management (cert-only auth, no passwords)
+  # Roles are only managed on primary — replicas get them via WAL replication
+  {{- if and .Values.isPrimary (or .Values.roles .Values.pgadminUser) }}
+  managed:
+    roles:
+      {{- /* Admin-injected pgAdmin read-only user */ -}}
+      {{- if .Values.pgadminUser }}
+      - name: {{ .Values.pgadminUser.name }}
+        ensure: present
+        login: true
+        superuser: false
+        createdb: false
+        inherit: true
+        {{- if .Values.pgadminUser.roles }}
+        inRoles:
+          {{- toYaml .Values.pgadminUser.roles | nindent 10 }}
+        {{- end }}
+      {{- end }}
+      {{- /* Client-defined roles */ -}}
+      {{- range .Values.roles }}
+      - name: {{ .name }}
+        ensure: {{ .ensure | default "present" }}
+        login: {{ .login | default true }}
+        superuser: {{ .superuser | default false }}
+        createdb: {{ .createdb | default false }}
+        inherit: {{ .inherit | default true }}
+        {{- if .connectionLimit }}
+        connectionLimit: {{ .connectionLimit }}
+        {{- end }}
+        {{- if .inRoles }}
+        inRoles:
+          {{- toYaml .inRoles | nindent 10 }}
+        {{- end }}
+      {{- end }}
+  {{- end }}
+
+  # CNPG Plugins (client-selected from admin-available list)
+  {{- if .Values.plugins }}
+  plugins:
+    {{- range .Values.plugins }}
+    - name: {{ .name }}
+      {{- if eq .name "barman-cloud.cloudnative-pg.io" }}
+      parameters:
+        barmanObjectName: {{ include "pgaas.clusterName" $ }}-object-store
+      {{- end }}
+    {{- end }}
+  {{- end }}
+
+  # Replication / Distributed Topology
+  {{- if .Values.replication.enabled }}
+  replica:
+    enabled: true
+    primary: {{ include "pgaas.clusterName" . }}-{{ .Values.replication.primaryDatacenter }}
+  {{- if .Values.externalClusters }}
+  externalClusters:
+    {{- range .Values.externalClusters }}
+    - name: {{ .name }}
+      barmanObjectStore:
+        destinationPath: {{ .barmanObjectStore.destinationPath }}
+        endpointURL: {{ .barmanObjectStore.endpointURL }}
+        s3Credentials:
+          {{- if $.Values.s3.credentials.secretName }}
+          accessKeyId:
+            name: {{ $.Values.s3.credentials.secretName }}
+            key: accessKey
+          secretAccessKey:
+            name: {{ $.Values.s3.credentials.secretName }}
+            key: secretKey
+          {{- else }}
+          accessKeyId:
+            name: {{ include "pgaas.s3SecretName" $ }}
+            key: accessKey
+          secretAccessKey:
+            name: {{ include "pgaas.s3SecretName" $ }}
+            key: secretKey
+          {{- end }}
+    {{- end }}
+  {{- end }}
+  {{- end }}
