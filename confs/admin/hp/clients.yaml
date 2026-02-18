@@ -1,0 +1,31 @@
+clients:
+  ic1:
+    datacenters:
+      - dc1
+    s3Bucket: ic1-hp-backups
+    storageProfile: M
+    s3Credentials:
+      secretName: ic1-s3-credentials    # Vault-synced K8s secret
+    ldapCredentials:
+      bindDn: "cn=pgadmin-ic1,ou=services,dc=example,dc=com"
+      bindPasswordSecret: ic1-ldap-bind-password
+    replication:
+      enabled: false
+    networkPolicy:
+      allowedNamespaces:
+        - monitoring
+  is1:
+    datacenters:
+      - dc1
+    s3Bucket: is1-hp-backups
+    storageProfile: M
+    s3Credentials:
+      secretName: is1-s3-credentials
+    ldapCredentials:
+      bindDn: "cn=pgadmin-is1,ou=services,dc=example,dc=com"
+      bindPasswordSecret: is1-ldap-bind-password
+    replication:
+      enabled: false
+    networkPolicy:
+      allowedNamespaces:
+        - monitoring

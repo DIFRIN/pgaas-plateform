@@ -1,0 +1,6 @@
+apiVersion: v2
+name: seaweedfs
+description: SeaweedFS for local S3-compatible storage (Barman backups)
+version: 0.1.0
+appVersion: "3.71"
+type: application

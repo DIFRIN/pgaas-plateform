@@ -1,0 +1,40 @@
+postgresql:
+  majorVersion: 16
+
+plugins:
+  - name: barman-cloud.cloudnative-pg.io
+
+databases:
+  - name: app_db
+    owner: app_user
+    cnPattern: "app_user.ic1.dev1"
+  - name: reporting_db
+    owner: report_user
+    cnPattern: "report_user.ic1.dev1"
+  - name: analytics_db
+    owner: analytics_user
+    cnPattern: "analytics_user.ic1.dev1"
+
+roles:
+  - name: app_user
+    ensure: present
+    login: true
+    superuser: false
+    createdb: false
+    inherit: true
+
+  - name: report_user
+    ensure: present
+    login: true
+    superuser: false
+    createdb: false
+    inherit: true
+    inRoles:
+      - pg_read_all_data
+
+  - name: analytics_user
+    ensure: present
+    login: true
+    superuser: false
+    createdb: false
+    inherit: true

@@ -1,0 +1,33 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pgaas.clusterName" . }}-db-access
+  labels:
+    {{- include "pgaas.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: {{ include "pgaas.clusterName" . }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from same namespace (client apps + pgAdmin)
+    - from:
+        - podSelector: {}
+    # Allow from admin-specified namespaces
+    {{- range .Values.networkPolicy.allowedNamespaces }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+    {{- end }}
+    # Allow from admin-specified CIDR blocks
+    {{- if .Values.networkPolicy.allowedCIDRs }}
+    - from:
+        {{- range .Values.networkPolicy.allowedCIDRs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+    {{- end }}
+{{- end }}

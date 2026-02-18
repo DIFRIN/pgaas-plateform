@@ -1,0 +1,55 @@
+{{- if .Values.s3.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-s3
+  labels:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/component: s3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: seaweedfs
+      app.kubernetes.io/component: s3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: seaweedfs
+        app.kubernetes.io/component: s3
+    spec:
+      containers:
+        - name: s3
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - weed
+            - s3
+            - -port={{ .Values.s3.port }}
+            - -filer={{ .Release.Name }}-filer:{{ .Values.filer.port }}
+            - -config=/etc/seaweedfs/s3.json
+          ports:
+            - containerPort: {{ .Values.s3.port }}
+              name: s3
+          volumeMounts:
+            - name: s3-config
+              mountPath: /etc/seaweedfs
+      volumes:
+        - name: s3-config
+          secret:
+            secretName: {{ .Release.Name }}-s3-credentials
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-s3
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.s3.port }}
+      targetPort: s3
+      name: s3
+  selector:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/component: s3
+{{- end }}

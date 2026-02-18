@@ -1,0 +1,31 @@
+clients:
+  ic1:
+    datacenters:
+      - local1
+      - local2
+    primaryDatacenter: local1
+    s3Bucket: ic1-backups
+    storageProfile: S
+    s3Credentials:
+      accessKey: admin
+      secretKey: admin123
+    ldapCredentials:
+      bindDn: "cn=admin,dc=pgaas,dc=local"
+      bindPassword: admin
+    replication:
+      enabled: true
+  is1:
+    datacenters:
+      - local1
+      - local2
+    primaryDatacenter: local1
+    s3Bucket: is1-backups
+    storageProfile: S
+    s3Credentials:
+      accessKey: admin
+      secretKey: admin123
+    ldapCredentials:
+      bindDn: "cn=admin,dc=pgaas,dc=local"
+      bindPassword: admin
+    replication:
+      enabled: true

@@ -1,0 +1,32 @@
+# Server TLS certificate (signed directly by root CA ClusterIssuer)
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "pgaas.serverCertName" . }}
+  labels:
+    {{- include "pgaas.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "pgaas.serverCertName" . }}
+  issuerRef:
+    name: {{ .Values.certificates.issuerName }}
+    kind: {{ .Values.certificates.issuerKind }}
+  commonName: {{ include "pgaas.clusterName" . }}
+  dnsNames:
+    - {{ include "pgaas.clusterName" . }}-rw
+    - {{ include "pgaas.clusterName" . }}-rw.{{ .Values.namespace }}.svc
+    - {{ include "pgaas.clusterName" . }}-rw.{{ .Values.namespace }}.svc.cluster.local
+    - {{ include "pgaas.clusterName" . }}-r
+    - {{ include "pgaas.clusterName" . }}-r.{{ .Values.namespace }}.svc
+    - {{ include "pgaas.clusterName" . }}-r.{{ .Values.namespace }}.svc.cluster.local
+    - {{ include "pgaas.clusterName" . }}-ro
+    - {{ include "pgaas.clusterName" . }}-ro.{{ .Values.namespace }}.svc
+    - {{ include "pgaas.clusterName" . }}-ro.{{ .Values.namespace }}.svc.cluster.local
+    # DC domain suffix entries for cross-DC access
+    - {{ include "pgaas.clusterName" . }}-rw.{{ .Values.namespace }}.{{ .Values.datacenter.dnsSuffix }}
+    - {{ include "pgaas.clusterName" . }}-r.{{ .Values.namespace }}.{{ .Values.datacenter.dnsSuffix }}
+    - {{ include "pgaas.clusterName" . }}-ro.{{ .Values.namespace }}.{{ .Values.datacenter.dnsSuffix }}
+  usages:
+    - server auth
+    - digital signature
+    - key encipherment
+    - client auth

@@ -1,0 +1,53 @@
+postgresql:
+  instances: 1
+  storage:
+    storageClass: standard
+  parameters:
+    max_connections: "50"
+    shared_buffers: 128MB
+    effective_cache_size: 256MB
+    work_mem: 4MB
+    maintenance_work_mem: 64MB
+    log_statement: all
+    log_min_duration_statement: "0"
+
+storageProfiles:
+  S:
+    storage:
+      size: 5Gi
+    resources:
+      requests: { memory: 256Mi, cpu: 100m }
+      limits: { memory: 512Mi, cpu: 500m }
+  M:
+    storage:
+      size: 10Gi
+    resources:
+      requests: { memory: 512Mi, cpu: 250m }
+      limits: { memory: 1Gi, cpu: "1" }
+  L:
+    storage:
+      size: 20Gi
+    resources:
+      requests: { memory: 1Gi, cpu: "1" }
+      limits: { memory: 2Gi, cpu: "2" }
+  XXL:
+    storage:
+      size: 50Gi
+    resources:
+      requests: { memory: 2Gi, cpu: "2" }
+      limits: { memory: 4Gi, cpu: "4" }
+
+# CNPG ImageCatalog - single source of truth for PG versions
+imageCatalog:
+  name: pgaas-images
+  images:
+    - major: 16
+      image: ghcr.io/cloudnative-pg/postgresql:16.4-bookworm
+    - major: 15
+      image: ghcr.io/cloudnative-pg/postgresql:15.8-bookworm
+
+# pgAdmin read-only user injected into every cluster
+pgadminUser:
+  name: pgadmin_readonly
+  roles:
+    - pg_read_all_data

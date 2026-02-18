@@ -1,0 +1,39 @@
+helmDefaults:
+  wait: true
+  timeout: 300
+  missingFileHandler: Warn
+
+releases:
+  # --- PGaaS Core Cluster ---
+  - name: pgaas-{{ requiredEnv "INS" }}-{{ requiredEnv "ENV" }}
+    chart: ./core
+    namespace: {{ requiredEnv "NAMESPACE" }}
+    createNamespace: true
+    labels:
+      component: cluster
+      ins: {{ requiredEnv "INS" }}
+      env: {{ requiredEnv "ENV" }}
+    values:
+      - confs/_generated/{{ requiredEnv "INS" }}-{{ requiredEnv "ENV" }}/values.yaml
+
+  # --- Local Infrastructure: SeaweedFS ---
+  - name: seaweedfs
+    chart: ./local-infra/seaweedfs
+    namespace: local-infra
+    createNamespace: true
+    labels:
+      component: local-infra
+      service: seaweedfs
+    values:
+      - confs/_generated/local-infra/seaweedfs-values.yaml
+
+  # --- Local Infrastructure: OpenLDAP ---
+  - name: openldap
+    chart: ./local-infra/openldap
+    namespace: local-infra
+    createNamespace: true
+    labels:
+      component: local-infra
+      service: openldap
+    values:
+      - confs/_generated/local-infra/openldap-values.yaml

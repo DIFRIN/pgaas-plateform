@@ -1,0 +1,51 @@
+postgresql:
+  instances: 3
+  storage:
+    storageClass: ceph-rbd
+  parameters:
+    max_connections: "300"
+    shared_buffers: 512MB
+    effective_cache_size: 1536MB
+    work_mem: 16MB
+    maintenance_work_mem: 256MB
+    log_statement: ddl
+    log_min_duration_statement: "1000"
+
+storageProfiles:
+  S:
+    storage:
+      size: 5Gi
+    resources:
+      requests: { memory: 256Mi, cpu: 100m }
+      limits: { memory: 512Mi, cpu: 500m }
+  M:
+    storage:
+      size: 10Gi
+    resources:
+      requests: { memory: 512Mi, cpu: 250m }
+      limits: { memory: 1Gi, cpu: "1" }
+  L:
+    storage:
+      size: 20Gi
+    resources:
+      requests: { memory: 1Gi, cpu: "1" }
+      limits: { memory: 2Gi, cpu: "2" }
+  XXL:
+    storage:
+      size: 50Gi
+    resources:
+      requests: { memory: 2Gi, cpu: "2" }
+      limits: { memory: 4Gi, cpu: "4" }
+
+imageCatalog:
+  name: pgaas-images
+  images:
+    - major: 16
+      image: ghcr.io/cloudnative-pg/postgresql:16.4-bookworm
+    - major: 15
+      image: ghcr.io/cloudnative-pg/postgresql:15.8-bookworm
+
+pgadminUser:
+  name: pgadmin_readonly
+  roles:
+    - pg_read_all_data

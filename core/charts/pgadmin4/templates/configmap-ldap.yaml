@@ -1,0 +1,23 @@
+{{- if .Values.ldap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-pgadmin4-ldap
+  labels:
+    app.kubernetes.io/name: pgadmin4
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  config_local.py: |
+    LDAP_SERVER_URI = '{{ .Values.ldap.serverUri }}'
+    LDAP_BASE_DN = '{{ .Values.ldap.baseDn }}'
+    LDAP_SEARCH_BASE_DN = '{{ .Values.ldap.baseDn }}'
+    LDAP_SEARCH_FILTER = '{{ .Values.ldap.searchFilter }}'
+    LDAP_SEARCH_SCOPE = '{{ .Values.ldap.searchBaseScope }}'
+    {{- if .Values.ldap.bindUser }}
+    LDAP_BIND_USER = '{{ .Values.ldap.bindUser }}'
+    LDAP_BIND_PASSWORD = open('/run/secrets/ldap-bind-password').read().strip()
+    {{- end }}
+    LDAP_USERNAME_ATTRIBUTE = 'cn'
+    AUTHENTICATION_SOURCES = ['ldap', 'internal']
+    LDAP_AUTO_CREATE_USER = True
+{{- end }}

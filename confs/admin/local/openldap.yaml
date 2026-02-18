@@ -1,0 +1,11 @@
+# OpenLDAP configuration for local environment
+openldap:
+  organization: PGaaS
+  domain: pgaas.local
+  baseDn: dc=pgaas,dc=local
+  adminPassword: admin
+  configPassword: config
+  service:
+    name: openldap-openldap
+    namespace: local-infra
+    port: 389

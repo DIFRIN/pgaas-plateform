@@ -1,0 +1,4 @@
+backup:
+  schedule: "0 0 0 * * *"
+  retentionPolicy: 30d
+  target: prefer-standby

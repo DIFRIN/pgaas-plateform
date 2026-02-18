@@ -1,0 +1,11 @@
+# SeaweedFS configuration for local environment
+seaweedfs:
+  s3:
+    accessKey: admin
+    secretKey: admin123
+    port: 8333
+  service:
+    name: seaweedfs-s3
+    namespace: local-infra
+  storage:
+    size: 10Gi

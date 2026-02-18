@@ -1,0 +1,118 @@
+# Structural defaults - overridden by generated values
+clusterName: ""
+namespace: ""
+ins: ""
+env: ""
+teamEnv: ""
+
+# Datacenter info (current DC used for deployment)
+datacenter:
+  name: ""
+  dnsSuffix: svc.cluster.local
+
+postgresql:
+  majorVersion: 16
+  instances: 1
+  storage:
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+  parameters: {}
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: switchover
+
+# CNPG ImageCatalog (namespace-scoped)
+imageCatalog:
+  name: pgaas-images
+  images: []
+
+databases: []
+
+# Declarative roles (CNPG managed.roles) - cert-only auth, no passwords
+roles: []
+
+# Admin-injected pgAdmin read-only user (cert-only auth, no password)
+pgadminUser:
+  name: pgadmin_readonly
+  roles:
+    - pg_read_all_data
+
+# CNPG plugins selected by client
+plugins: []
+
+backup:
+  schedule: "0 0 2 * * *"
+  retentionPolicy: "7d"
+  target: prefer-standby
+
+# S3 backup storage - per-client bucket and credentials
+s3:
+  endpoint: ""
+  region: ""
+  bucket: ""
+  destinationPath: ""
+  credentials:
+    # Local env: inline accessKey/secretKey strings
+    accessKey: ""
+    secretKey: ""
+    # Real envs: Vault-synced K8s secret name (overrides inline keys)
+    secretName: ""
+
+# RBAC — self-service (hp/perf) vs admin-only (pprod/prod)
+rbac:
+  enabled: true
+  adminGroup: pgaas-admins
+  clientGroup: ""
+
+# NetworkPolicy — namespace isolation for CNPG pods
+networkPolicy:
+  enabled: true
+  allowedNamespaces: []
+  allowedCIDRs: []
+
+isPrimary: true
+
+replication:
+  enabled: false
+  primaryDatacenter: ""
+
+externalClusters: []
+
+# cert-manager CA issuer (from manifests/cert-manager-ca.yaml)
+certificates:
+  issuerName: pgaas-ca-issuer
+  issuerKind: ClusterIssuer
+
+# pgAdmin4 subchart - mTLS connections to CNPG, LDAP auth
+pgadmin4:
+  enabled: true
+  tls:
+    enabled: false
+    secretName: ""
+    issuerName: pgaas-ca-issuer
+    issuerKind: ClusterIssuer
+    dnsNames: []
+  ldap:
+    enabled: true
+    serverUri: ""
+    baseDn: ""
+    bindUser: ""
+    bindPassword: ""
+    bindPasswordSecret: ""
+    bindPasswordKey: password
+  cnpg:
+    clusterName: ""
+    host: ""
+    port: 5432
+    databases: []
+    tlsSecret: pgadmin_readonly-client-tls
+    caSecret: ""
+  ingress:
+    enabled: false
+    host: ""

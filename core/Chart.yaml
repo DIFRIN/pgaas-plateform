@@ -1,0 +1,11 @@
+apiVersion: v2
+name: pgaas-core
+description: PGaaS - CloudNativePG PostgreSQL cluster with pgAdmin4
+version: 0.1.0
+appVersion: "16.4"
+type: application
+dependencies:
+  - name: pgadmin4
+    version: "0.1.0"
+    repository: "file://charts/pgadmin4"
+    condition: pgadmin4.enabled

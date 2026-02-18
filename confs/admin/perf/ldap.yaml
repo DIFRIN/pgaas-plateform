@@ -1,0 +1,4 @@
+ldap:
+  serverUri: ldaps://ldap.example.com:636
+  baseDn: ou=people,dc=example,dc=com
+  searchFilter: "(uid={login})"

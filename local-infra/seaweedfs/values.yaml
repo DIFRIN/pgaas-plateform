@@ -1,0 +1,50 @@
+image:
+  repository: chrislusf/seaweedfs
+  tag: "3.71"
+  pullPolicy: IfNotPresent
+
+master:
+  replicas: 1
+  port: 9333
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 50m
+    limits:
+      memory: 128Mi
+      cpu: 200m
+
+volume:
+  replicas: 1
+  port: 8080
+  dataDir: /data
+  storage:
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 50m
+    limits:
+      memory: 256Mi
+      cpu: 200m
+
+filer:
+  replicas: 1
+  port: 8888
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 50m
+    limits:
+      memory: 128Mi
+      cpu: 200m
+
+s3:
+  enabled: true
+  port: 8333
+  accessKey: admin
+  secretKey: admin123
+
+service:
+  type: ClusterIP

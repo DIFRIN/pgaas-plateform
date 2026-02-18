@@ -1,0 +1,145 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-pgadmin4
+  labels:
+    app.kubernetes.io/name: pgadmin4
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pgadmin4
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pgadmin4
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: pgadmin4
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            {{- if .Values.tls.enabled }}
+            - name: https
+              containerPort: 443
+              protocol: TCP
+            {{- else }}
+            - name: http
+              containerPort: 80
+              protocol: TCP
+            {{- end }}
+          env:
+            - name: PGADMIN_DEFAULT_EMAIL
+              value: {{ .Values.defaultEmail | quote }}
+            - name: PGADMIN_DEFAULT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.defaultPasswordSecret }}
+                  key: {{ .Values.defaultPasswordKey }}
+            {{- if .Values.tls.enabled }}
+            - name: PGADMIN_ENABLE_TLS
+              value: "True"
+            {{- end }}
+            {{- if .Values.ldap.enabled }}
+            - name: PGADMIN_CONFIG_AUTHENTICATION_SOURCES
+              value: "['ldap', 'internal']"
+            - name: PGADMIN_CONFIG_LDAP_AUTO_CREATE_USER
+              value: "True"
+            {{- end }}
+            {{- if .Values.cnpg.databases }}
+            - name: PGADMIN_SERVER_JSON_FILE
+              value: /pgadmin4/servers/servers.json
+            {{- end }}
+          volumeMounts:
+            {{- if .Values.tls.enabled }}
+            - name: server-tls
+              mountPath: /certs/server/
+              readOnly: true
+            {{- end }}
+            {{- if .Values.ldap.enabled }}
+            - name: ldap-config
+              mountPath: /pgadmin4/config_local.py
+              subPath: config_local.py
+            {{- end }}
+            {{- if .Values.ldap.bindPasswordSecret }}
+            - name: ldap-bind-password
+              mountPath: /run/secrets
+              readOnly: true
+            {{- end }}
+            {{- if .Values.cnpg.databases }}
+            - name: servers-config
+              mountPath: /pgadmin4/servers
+              readOnly: true
+            - name: cnpg-client-tls
+              mountPath: /pgadmin4/tls
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /misc/ping
+              port: {{ if .Values.tls.enabled }}https{{ else }}http{{ end }}
+              {{- if .Values.tls.enabled }}
+              scheme: HTTPS
+              {{- end }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /misc/ping
+              port: {{ if .Values.tls.enabled }}https{{ else }}http{{ end }}
+              {{- if .Values.tls.enabled }}
+              scheme: HTTPS
+              {{- end }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        {{- if .Values.tls.enabled }}
+        - name: server-tls
+          secret:
+            secretName: {{ .Values.tls.secretName }}
+            items:
+              - key: tls.crt
+                path: server.cert
+              - key: tls.key
+                path: server.key
+                mode: 0600
+        {{- end }}
+        {{- if .Values.ldap.enabled }}
+        - name: ldap-config
+          configMap:
+            name: {{ .Release.Name }}-pgadmin4-ldap
+        {{- end }}
+        {{- if .Values.ldap.bindPasswordSecret }}
+        - name: ldap-bind-password
+          secret:
+            secretName: {{ .Values.ldap.bindPasswordSecret }}
+            items:
+              - key: {{ .Values.ldap.bindPasswordKey }}
+                path: ldap-bind-password
+        {{- end }}
+        {{- if .Values.cnpg.databases }}
+        - name: servers-config
+          configMap:
+            name: {{ .Release.Name }}-pgadmin4-servers
+        - name: cnpg-client-tls
+          projected:
+            sources:
+              - secret:
+                  name: {{ .Values.cnpg.tlsSecret }}
+                  items:
+                    - key: tls.crt
+                      path: tls.crt
+                    - key: tls.key
+                      path: tls.key
+                      mode: 0600
+              - secret:
+                  name: {{ .Values.cnpg.caSecret }}
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+        {{- end }}

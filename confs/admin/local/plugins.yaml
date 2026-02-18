@@ -1,0 +1,4 @@
+# Available CNPG plugins for this environment (admin reference)
+availablePlugins:
+  - name: barman-cloud.cloudnative-pg.io
+    description: Barman Cloud backup via S3-compatible storage

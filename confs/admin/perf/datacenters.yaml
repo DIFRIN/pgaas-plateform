@@ -1,0 +1,6 @@
+datacenters:
+  dc1:
+    dnsSuffix: dc1.example.com
+    s3:
+      endpoint: https://s3.dc1.example.com
+      region: eu-west-1
