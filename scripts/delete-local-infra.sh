@@ -13,7 +13,7 @@ echo "==> Deleting local infrastructure (SeaweedFS + OpenLDAP + cert-manager CA)
 if [[ -n "$DC_INPUT" ]]; then
   DCS=("$DC_INPUT")
 else
-  mapfile -t DCS < <(yq '.datacenters | keys | .[]' "$DC_FILE")
+  mapfile -t DCS < <(yq_raw '.datacenters | keys | .[]' "$DC_FILE")
 fi
 
 if [[ ${#DCS[@]} -eq 0 ]]; then

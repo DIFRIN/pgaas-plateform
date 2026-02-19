@@ -29,6 +29,67 @@ Platform-managed CloudNativePG PostgreSQL clusters provisioned per client (INS c
 └─────────────────┘
 ```
 
+### Per-Instance Cluster Topology
+
+Each client (INS) instance is deployed as an independent CNPG cluster per datacenter, with pgAdmin backed by LDAP and backups to S3. When replication is enabled, a replica cluster in a second DC continuously replays WAL from the primary's S3 archive. Both clusters have the **same symmetric architecture** — a designated primary instance plus cascading standbys — and the operator creates all three services (`-rw`, `-ro`, `-r`) on both. The replica cluster's designated primary is in continuous recovery mode (read-only); it can be promoted to a full primary at any time.
+
+```
+           ┌──────────────────────────────────────────────────────────────────────────────┐
+           │                     S3 Bucket: INS-ENV-bucket                                │
+           │               (same bucket, replicated between DCs)                          │
+           │                                                                              │
+           │  Object paths (DC in path avoids collisions):                                │
+           │    INS-ENV-dc1-backup/    ← DC1 writes its backups here                      │
+           │    INS-ENV-dc2-backup/    ← DC2 writes its backups here                      │
+           │    INS-ENV-dc1-replica/   ← DC2 externalClusters reads DC1's archive here    │
+           │    INS-ENV-dc2-replica/   ← DC1 externalClusters reads DC2's archive here    │
+           │                                                                              │
+           └──────────────▲───────────────────────────────────▲───────────────────────────┘
+                          │                                   │
+     ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┼─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┼ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+    │  Datacenter 1 (DC1) │              │                    │    Datacenter 2 (DC2)     │
+       K8s Cluster        │                                   │    K8s Cluster
+    │                     │              │                    │                           │
+      ┌───────────────────┴──────┐          ┌─────────────────┴────────────────────────┐
+    │ │  CNPG Cluster (PRIMARY)  │   │      │  CNPG Cluster (REPLICA)                  │  │
+      │                          │          │  (only if replication enabled)            │
+    │ │  ┌────────┐ ┌────┐ ┌──┐ │    │      │  ┌────────┐ ┌────┐ ┌──┐                 │  │
+      │  │   RW   │ │ R  │ │RO│ │   WAL     │  │   RW   │ │ R  │ │RO│                 │
+    │ │  │primary │ │read│ │ro│ │───via ───►│  │desig.  │ │read│ │ro│                 │  │
+      │  │ (write)│ │svc │ │  │ │   S3      │  │primary │ │svc │ │  │                 │
+    │ │  └────────┘ └────┘ └──┘ │   │       │  │(recov.)│ └────┘ └──┘                 │  │
+      │                          │          │  └────────┘                               │
+    │ └──────────────────────────┘   │      │  Same services; writes blocked until      │  │
+                    │                       │  promoted to primary                       │
+    │               │                  │      └───────────────────────────────────────────┘  │
+                    │                                          │
+    │               ▼ mTLS (cert-only)│                        ▼ mTLS                     │
+      ┌───────────────────────┐           ┌───────────────────────┐
+    │ │  pgAdmin4 (HTTPS/443) │         │ │  pgAdmin4 (HTTPS/443) │                       │
+      │  Shared DB connections│           │  Shared DB connections│
+    │ │  via pgadmin_readonly │         │ │  via pgadmin_readonly │                       │
+      └───────────┬───────────┘           └───────────┬───────────┘
+    │             │ LDAP bind           │             │ LDAP bind                         │
+                  ▼                                   ▼
+    │     ┌──────────────┐              │     ┌──────────────┐                            │
+          │ LDAP Server  │                    │ LDAP Server  │
+    │     │ (OpenLDAP or │              │     │ (OpenLDAP or │                            │
+          │  corporate)  │                    │  corporate)  │
+    │     └──────────────┘              │     └──────────────┘                            │
+     ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+```
+
+**Key points:**
+- **Single S3 bucket** per client (e.g., `INS-ENV-bucket`), shared by both DCs — the DC name in the object path (`INS-ENV-dc1-backup/`, `INS-ENV-dc2-backup/`) prevents collisions
+- Both primary and replica clusters have the **same symmetric architecture**: a designated primary + cascading standbys, with all three services (`-rw`, `-ro`, `-r`) created by the operator
+- **RW** (read-write): points to the designated primary instance — accepts writes on the primary cluster; on the replica cluster, the designated primary is in continuous recovery mode (read-only) until promoted
+- **R** (read): load-balanced across all instances (designated primary + standbys)
+- **RO** (read-only): hot standby replicas only
+- **pgAdmin** connects via mTLS using a shared `pgadmin_readonly` certificate (no password)
+- **S3 backup**: every cluster writes its own backups to `INS-ENV-{DC}-backup/`; `externalClusters` entries reference the other DC's archive via `INS-ENV-{DC}-replica/`
+- **Cross-DC replication** is WAL-based via S3 archive, not streaming replication over the network
+- **Promotion**: disabling `replica.enabled` promotes the designated primary to a full read-write primary, making the replica cluster independent
+
 ## Multi-Datacenter Architecture
 
 PGaaS deploys one independent Kubernetes cluster per datacenter. This is a deliberate choice over stretched/extended K8s clusters (which span multiple datacenters under a single control plane) — those require low-latency inter-DC networking, complex overlay configurations, and introduce a single etcd quorum as a cross-DC failure domain. Instead, each datacenter runs its own fully autonomous K8s cluster with its own control plane, etcd, CNPG operator, and cert-manager CA.
@@ -57,7 +118,7 @@ PGaaS deploys one independent Kubernetes cluster per datacenter. This is a delib
   │  │ CNPG Cluster   │  │    WAL streaming      │  │ CNPG Cluster  │  │
   │  │ (PRIMARY)      │──┼── via S3 archive ────►│  │ (REPLICA)     │  │
   │  │                │  │                        │  │               │  │
-  │  │ RW/RO/R svc    │  │                        │  │ RO svc only   │  │
+  │  │ RW/R/RO svc    │  │                        │  │ RW/R/RO svc   │  │
   │  └───────────────┘  │                        │  └──────────────┘  │
   │                     │                        │                    │
   │  cert-manager CA    │                        │  cert-manager CA   │

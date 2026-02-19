@@ -14,7 +14,7 @@ if [[ -n "$DC_INPUT" ]]; then
   DCS=("$DC_INPUT")
 else
   # Read all DCs from local datacenters.yaml
-  mapfile -t DCS < <(yq '.datacenters | keys | .[]' "$DC_FILE")
+  mapfile -t DCS < <(yq_raw '.datacenters | keys | .[]' "$DC_FILE")
 fi
 
 if [[ ${#DCS[@]} -eq 0 ]]; then
@@ -86,7 +86,7 @@ resolve_kube_context "$FIRST_DC_NAME" "$DC_FILE"
 SEAWEEDFS_NODEPORT=$(kctl get svc seaweedfs-s3 -n local-infra -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "N/A")
 
 if command -v minikube &>/dev/null; then
-  FIRST_DC_CTX="$(yq ".datacenters.\"$FIRST_DC_NAME\".kubeContext // \"minikube\"" "$DC_FILE")"
+  FIRST_DC_CTX="$(yq_raw ".datacenters.\"$FIRST_DC_NAME\".kubeContext // \"minikube\"" "$DC_FILE")"
   CLUSTER_IP=$(minikube ip -p "$FIRST_DC_CTX" 2>/dev/null || echo "N/A")
 else
   CLUSTER_IP="$(kctl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || echo "N/A")"

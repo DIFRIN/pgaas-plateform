@@ -26,7 +26,7 @@ fi
 
 # Validate: user databases.yaml may only contain allowed top-level keys
 ALLOWED_USER_KEYS="postgresql plugins databases roles"
-USER_KEYS="$(yq 'keys | .[]' "$USER_DB_FILE")"
+USER_KEYS="$(yq_raw 'keys | .[]' "$USER_DB_FILE")"
 while IFS= read -r key; do
   [[ -z "$key" ]] && continue
   if ! echo "$ALLOWED_USER_KEYS" | grep -qw "$key"; then
@@ -64,12 +64,12 @@ if [[ "$CLIENT_CONFIG" == "null" ]]; then
   exit 1
 fi
 
-CLIENT_DCS="$(echo "$CLIENT_CONFIG" | yq '.datacenters[]')"
-CLIENT_S3_BUCKET="$(echo "$CLIENT_CONFIG" | yq '.s3Bucket')"
-REPLICATION_ENABLED="$(echo "$CLIENT_CONFIG" | yq '.replication.enabled // false')"
+CLIENT_DCS="$(echo "$CLIENT_CONFIG" | yq_raw '.datacenters[]')"
+CLIENT_S3_BUCKET="$(echo "$CLIENT_CONFIG" | yq_raw '.s3Bucket')"
+REPLICATION_ENABLED="$(echo "$CLIENT_CONFIG" | yq_raw '.replication.enabled // false')"
 
 # Determine primary datacenter (admin-configured)
-PRIMARY_DC="$(echo "$CLIENT_CONFIG" | yq '.primaryDatacenter // .datacenters[0]')"
+PRIMARY_DC="$(echo "$CLIENT_CONFIG" | yq_raw '.primaryDatacenter // .datacenters[0]')"
 
 # Determine current datacenter (deployment target)
 # Use explicit DC input, or fall back to first DC in client list
@@ -88,7 +88,7 @@ else
 fi
 
 # --- Step 4b: Resolve storage profile ---
-STORAGE_PROFILE="$(echo "$CLIENT_CONFIG" | yq '.storageProfile // "S"')"
+STORAGE_PROFILE="$(echo "$CLIENT_CONFIG" | yq_raw '.storageProfile // "S"')"
 PROFILE_CONFIG="$(echo "$MERGED" | yq ".storageProfiles.\"$STORAGE_PROFILE\"")"
 if [[ "$PROFILE_CONFIG" == "null" || -z "$PROFILE_CONFIG" ]]; then
   echo "ERROR: Storage profile '$STORAGE_PROFILE' not found in postgresql.yaml storageProfiles"
@@ -99,14 +99,14 @@ fi
 PROFILE_YAML="$(cat <<PROFEOF
 postgresql:
   storage:
-    size: $(echo "$PROFILE_CONFIG" | yq '.storage.size')
+    size: $(echo "$PROFILE_CONFIG" | yq_raw '.storage.size')
   resources:
     requests:
-      memory: $(echo "$PROFILE_CONFIG" | yq '.resources.requests.memory')
-      cpu: $(echo "$PROFILE_CONFIG" | yq '.resources.requests.cpu')
+      memory: $(echo "$PROFILE_CONFIG" | yq_raw '.resources.requests.memory')
+      cpu: $(echo "$PROFILE_CONFIG" | yq_raw '.resources.requests.cpu')
     limits:
-      memory: $(echo "$PROFILE_CONFIG" | yq '.resources.limits.memory')
-      cpu: $(echo "$PROFILE_CONFIG" | yq '.resources.limits.cpu')
+      memory: $(echo "$PROFILE_CONFIG" | yq_raw '.resources.limits.memory')
+      cpu: $(echo "$PROFILE_CONFIG" | yq_raw '.resources.limits.cpu')
 PROFEOF
 )"
 MERGED="$(echo "$MERGED" | yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' - <(echo "$PROFILE_YAML"))"
@@ -128,23 +128,23 @@ if [[ "$DC_CONFIG" == "null" ]]; then
 fi
 
 DC_S3_CONFIG="$(echo "$DC_CONFIG" | yq '.s3')"
-DC_DNS_SUFFIX="$(echo "$DC_CONFIG" | yq '.dnsSuffix // "svc.cluster.local"')"
+DC_DNS_SUFFIX="$(echo "$DC_CONFIG" | yq_raw '.dnsSuffix // "svc.cluster.local"')"
 
 if [[ "$DC_S3_CONFIG" == "null" ]]; then
   echo "ERROR: Datacenter '$CURRENT_DC' S3 config not found in $DC_FILE"
   exit 1
 fi
 
-S3_ENDPOINT="$(echo "$DC_S3_CONFIG" | yq '.endpoint')"
-S3_REGION="$(echo "$DC_S3_CONFIG" | yq '.region')"
+S3_ENDPOINT="$(echo "$DC_S3_CONFIG" | yq_raw '.endpoint')"
+S3_REGION="$(echo "$DC_S3_CONFIG" | yq_raw '.region')"
 
 # --- Step 5b: Resolve per-client S3 credentials ---
 # Local env: inline accessKey/secretKey strings in clients.yaml
 # Real envs: reference a Vault-synced K8s secret name
 CLIENT_S3_CREDS="$(echo "$CLIENT_CONFIG" | yq '.s3Credentials')"
-S3_CREDS_SECRET_NAME="$(echo "$CLIENT_S3_CREDS" | yq '.secretName // ""')"
-S3_CREDS_ACCESS_KEY="$(echo "$CLIENT_S3_CREDS" | yq '.accessKey // ""')"
-S3_CREDS_SECRET_KEY="$(echo "$CLIENT_S3_CREDS" | yq '.secretKey // ""')"
+S3_CREDS_SECRET_NAME="$(echo "$CLIENT_S3_CREDS" | yq_raw '.secretName // ""')"
+S3_CREDS_ACCESS_KEY="$(echo "$CLIENT_S3_CREDS" | yq_raw '.accessKey // ""')"
+S3_CREDS_SECRET_KEY="$(echo "$CLIENT_S3_CREDS" | yq_raw '.secretKey // ""')"
 
 # --- Step 6: Compute derived values ---
 # Destination paths include DC mention: INS-ENV-DC-BACKUP / INS-ENV-DC-REPLICA
@@ -161,7 +161,7 @@ if [[ "$REPLICATION_ENABLED" == "true" ]]; then
     if [[ "$dc" != "$CURRENT_DC" ]]; then
       # Replication path for remote DC
       REPLICA_PATH="s3://${CLIENT_S3_BUCKET}/${INS}-${ENV}-${dc}-replica/"
-      REMOTE_S3_ENDPOINT="$(yq ".datacenters.\"$dc\".s3.endpoint" "$DC_FILE")"
+      REMOTE_S3_ENDPOINT="$(yq_raw ".datacenters.\"$dc\".s3.endpoint" "$DC_FILE")"
       EXTERNAL_CLUSTERS_YAML="$EXTERNAL_CLUSTERS_YAML
   - name: ${CLUSTER_NAME}-${dc}
     barmanObjectStore:
@@ -219,7 +219,7 @@ fi
 FINAL="$(echo "$MERGED" | yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' - <(echo "$COMPUTED_YAML"))"
 
 # --- Step 8: Add pgAdmin4 CNPG connection config ---
-DB_LIST="$(echo "$FINAL" | yq '.databases[] | .name' 2>/dev/null || echo "")"
+DB_LIST="$(echo "$FINAL" | yq_raw '.databases[] | .name' 2>/dev/null || echo "")"
 if [[ -n "$DB_LIST" ]]; then
   # Build pgadmin4 databases array via yq
   PGADMIN_YAML="pgadmin4:"
@@ -259,26 +259,26 @@ if [[ -n "$DB_LIST" ]]; then
   if [[ "$ENV" == "local" ]]; then
     OPENLDAP_FILE="$ADMIN_ENV_DIR/openldap.yaml"
     if [[ -f "$OPENLDAP_FILE" ]]; then
-      LDAP_SVC_NAME="$(yq '.openldap.service.name' "$OPENLDAP_FILE")"
-      LDAP_SVC_NS="$(yq '.openldap.service.namespace' "$OPENLDAP_FILE")"
-      LDAP_SVC_PORT="$(yq '.openldap.service.port' "$OPENLDAP_FILE")"
-      LDAP_BASE_DN="ou=people,$(yq '.openldap.baseDn' "$OPENLDAP_FILE")"
+      LDAP_SVC_NAME="$(yq_raw '.openldap.service.name' "$OPENLDAP_FILE")"
+      LDAP_SVC_NS="$(yq_raw '.openldap.service.namespace' "$OPENLDAP_FILE")"
+      LDAP_SVC_PORT="$(yq_raw '.openldap.service.port' "$OPENLDAP_FILE")"
+      LDAP_BASE_DN="ou=people,$(yq_raw '.openldap.baseDn' "$OPENLDAP_FILE")"
       LDAP_SERVER_URI="ldap://${LDAP_SVC_NAME}.${LDAP_SVC_NS}.svc.cluster.local:${LDAP_SVC_PORT}"
     fi
   else
     LDAP_FILE="$ADMIN_ENV_DIR/ldap.yaml"
     if [[ -f "$LDAP_FILE" ]]; then
-      LDAP_SERVER_URI="$(yq '.ldap.serverUri' "$LDAP_FILE")"
-      LDAP_BASE_DN="$(yq '.ldap.baseDn' "$LDAP_FILE")"
-      LDAP_SEARCH_FILTER="$(yq '.ldap.searchFilter // ""' "$LDAP_FILE")"
+      LDAP_SERVER_URI="$(yq_raw '.ldap.serverUri' "$LDAP_FILE")"
+      LDAP_BASE_DN="$(yq_raw '.ldap.baseDn' "$LDAP_FILE")"
+      LDAP_SEARCH_FILTER="$(yq_raw '.ldap.searchFilter // ""' "$LDAP_FILE")"
     fi
   fi
 
   if [[ -n "$LDAP_SERVER_URI" ]]; then
     # Read per-client LDAP bind credentials from clients.yaml
-    LDAP_BIND_DN="$(echo "$CLIENT_CONFIG" | yq '.ldapCredentials.bindDn // ""')"
-    LDAP_BIND_PASSWORD="$(echo "$CLIENT_CONFIG" | yq '.ldapCredentials.bindPassword // ""')"
-    LDAP_BIND_PASSWORD_SECRET="$(echo "$CLIENT_CONFIG" | yq '.ldapCredentials.bindPasswordSecret // ""')"
+    LDAP_BIND_DN="$(echo "$CLIENT_CONFIG" | yq_raw '.ldapCredentials.bindDn // ""')"
+    LDAP_BIND_PASSWORD="$(echo "$CLIENT_CONFIG" | yq_raw '.ldapCredentials.bindPassword // ""')"
+    LDAP_BIND_PASSWORD_SECRET="$(echo "$CLIENT_CONFIG" | yq_raw '.ldapCredentials.bindPasswordSecret // ""')"
 
     PGADMIN_YAML="$PGADMIN_YAML
   ldap:
@@ -322,7 +322,7 @@ else
   enabled: true"
 
   # Read allowed namespaces from client config
-  CLIENT_NP_NS="$(echo "$CLIENT_CONFIG" | yq '.networkPolicy.allowedNamespaces // []')"
+  CLIENT_NP_NS="$(echo "$CLIENT_CONFIG" | yq_raw '.networkPolicy.allowedNamespaces // []')"
   if [[ "$CLIENT_NP_NS" != "[]" ]]; then
     NETPOL_YAML="$NETPOL_YAML
   allowedNamespaces:"
@@ -330,11 +330,11 @@ else
       [[ -z "$ns" ]] && continue
       NETPOL_YAML="$NETPOL_YAML
     - $ns"
-    done <<< "$(echo "$CLIENT_CONFIG" | yq '.networkPolicy.allowedNamespaces[]' 2>/dev/null)"
+    done <<< "$(echo "$CLIENT_CONFIG" | yq_raw '.networkPolicy.allowedNamespaces[]' 2>/dev/null)"
   fi
 
   # Read allowed CIDRs from client config
-  CLIENT_NP_CIDR="$(echo "$CLIENT_CONFIG" | yq '.networkPolicy.allowedCIDRs // []')"
+  CLIENT_NP_CIDR="$(echo "$CLIENT_CONFIG" | yq_raw '.networkPolicy.allowedCIDRs // []')"
   if [[ "$CLIENT_NP_CIDR" != "[]" ]]; then
     NETPOL_YAML="$NETPOL_YAML
   allowedCIDRs:"
@@ -342,7 +342,7 @@ else
       [[ -z "$cidr" ]] && continue
       NETPOL_YAML="$NETPOL_YAML
     - $cidr"
-    done <<< "$(echo "$CLIENT_CONFIG" | yq '.networkPolicy.allowedCIDRs[]' 2>/dev/null)"
+    done <<< "$(echo "$CLIENT_CONFIG" | yq_raw '.networkPolicy.allowedCIDRs[]' 2>/dev/null)"
   fi
 fi
 FINAL="$(echo "$FINAL" | yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' - <(echo "$NETPOL_YAML"))"
@@ -386,12 +386,12 @@ if [[ "$ENV" == "local" ]]; then
   if [[ -f "$SEAWEEDFS_FILE" ]]; then
     SEAWEEDFS_YAML="$(cat <<SWEOF
 s3:
-  accessKey: $(yq '.seaweedfs.s3.accessKey' "$SEAWEEDFS_FILE")
-  secretKey: $(yq '.seaweedfs.s3.secretKey' "$SEAWEEDFS_FILE")
-  port: $(yq '.seaweedfs.s3.port' "$SEAWEEDFS_FILE")
+  accessKey: $(yq_raw '.seaweedfs.s3.accessKey' "$SEAWEEDFS_FILE")
+  secretKey: $(yq_raw '.seaweedfs.s3.secretKey' "$SEAWEEDFS_FILE")
+  port: $(yq_raw '.seaweedfs.s3.port' "$SEAWEEDFS_FILE")
 volume:
   storage:
-    size: $(yq '.seaweedfs.storage.size' "$SEAWEEDFS_FILE")
+    size: $(yq_raw '.seaweedfs.storage.size' "$SEAWEEDFS_FILE")
 SWEOF
 )"
     echo "$SEAWEEDFS_YAML" > "$INFRA_OUTPUT_DIR/seaweedfs-values.yaml"
@@ -401,11 +401,11 @@ SWEOF
   # Generate OpenLDAP values with seed users from all clients
   if [[ -f "$OPENLDAP_FILE" ]]; then
     OPENLDAP_YAML="$(cat <<LDEOF
-organization: $(yq '.openldap.organization' "$OPENLDAP_FILE")
-domain: $(yq '.openldap.domain' "$OPENLDAP_FILE")
-baseDn: $(yq '.openldap.baseDn' "$OPENLDAP_FILE")
-adminPassword: $(yq '.openldap.adminPassword' "$OPENLDAP_FILE")
-configPassword: $(yq '.openldap.configPassword' "$OPENLDAP_FILE")
+organization: $(yq_raw '.openldap.organization' "$OPENLDAP_FILE")
+domain: $(yq_raw '.openldap.domain' "$OPENLDAP_FILE")
+baseDn: $(yq_raw '.openldap.baseDn' "$OPENLDAP_FILE")
+adminPassword: $(yq_raw '.openldap.adminPassword' "$OPENLDAP_FILE")
+configPassword: $(yq_raw '.openldap.configPassword' "$OPENLDAP_FILE")
 LDEOF
 )"
 

@@ -21,7 +21,7 @@ DEMOTION_TOKEN="${4:-}"
 
 # Resolve DC from client config if not provided
 if [[ -z "$DC" ]]; then
-  DC="$(yq ".clients.\"$INS\".datacenters[0]" "$ADMIN_ENV_DIR/clients.yaml")"
+  DC="$(yq_raw ".clients.\"$INS\".datacenters[0]" "$ADMIN_ENV_DIR/clients.yaml")"
 fi
 
 DC_FILE="$ADMIN_ENV_DIR/datacenters.yaml"
