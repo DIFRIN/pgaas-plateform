@@ -6,6 +6,11 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFS_DIR="$PROJECT_ROOT/confs"
 GENERATED_DIR="$CONFS_DIR/_generated"
 
+# Strip quotes from yq scalar output (handles yq versions that quote strings)
+yq_raw() {
+  yq "$@" | tr -d '"'
+}
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -25,7 +30,7 @@ info() { echo -e "  ${CYAN}→${NC} $1"; }
 check_field() {
   local file="$1" expr="$2" expected="$3" label="$4"
   local actual
-  actual="$(yq "$expr" "$file" 2>/dev/null || echo "ERROR")"
+  actual="$(yq_raw "$expr" "$file" 2>/dev/null || echo "ERROR")"
   if [[ "$actual" == "$expected" ]]; then
     pass "$label = $actual"
   else
@@ -36,7 +41,7 @@ check_field() {
 check_not_empty() {
   local file="$1" expr="$2" label="$3"
   local actual
-  actual="$(yq "$expr" "$file" 2>/dev/null || echo "")"
+  actual="$(yq_raw "$expr" "$file" 2>/dev/null || echo "")"
   if [[ -n "$actual" && "$actual" != "null" && "$actual" != "" ]]; then
     pass "$label = $actual"
   else
@@ -47,7 +52,7 @@ check_not_empty() {
 check_absent() {
   local file="$1" expr="$2" label="$3"
   local actual
-  actual="$(yq "$expr" "$file" 2>/dev/null || echo "null")"
+  actual="$(yq_raw "$expr" "$file" 2>/dev/null || echo "null")"
   if [[ "$actual" == "null" || -z "$actual" ]]; then
     pass "$label is absent (correct)"
   else
@@ -115,9 +120,9 @@ preview_scenario() {
 
   # Check destination path format: INS-ENV-DC-backup
   local dest_path
-  dest_path="$(yq '.s3.destinationPath' "$values")"
+  dest_path="$(yq_raw '.s3.destinationPath' "$values")"
   local current_dc
-  current_dc="$(yq '.datacenter.name' "$values")"
+  current_dc="$(yq_raw '.datacenter.name' "$values")"
   local expected_path_pattern="${ins}-${env}-${current_dc}-backup"
   if echo "$dest_path" | grep -q "$expected_path_pattern"; then
     pass "Destination path contains '$expected_path_pattern'"
@@ -127,9 +132,9 @@ preview_scenario() {
 
   echo "  [S3 credentials]"
   local creds_secret
-  creds_secret="$(yq '.s3.credentials.secretName // ""' "$values")"
+  creds_secret="$(yq_raw '.s3.credentials.secretName // ""' "$values")"
   local creds_access
-  creds_access="$(yq '.s3.credentials.accessKey // ""' "$values")"
+  creds_access="$(yq_raw '.s3.credentials.accessKey // ""' "$values")"
   if [[ -n "$creds_secret" && "$creds_secret" != "null" ]]; then
     pass "S3 credentials via Vault secret: $creds_secret"
   elif [[ -n "$creds_access" && "$creds_access" != "null" ]]; then
@@ -140,7 +145,7 @@ preview_scenario() {
 
   echo "  [Databases & auth]"
   local db_count
-  db_count="$(yq '.databases | length' "$values")"
+  db_count="$(yq_raw '.databases | length' "$values")"
   if [[ "$db_count" -gt 0 ]]; then
     pass "databases: $db_count database(s) defined"
   else
@@ -149,7 +154,7 @@ preview_scenario() {
 
   # Check no passwordSecret anywhere in databases
   local pw_count
-  pw_count="$(yq '[.databases[].roles[]? | select(.passwordSecret)] | length' "$values" 2>/dev/null || echo "0")"
+  pw_count="$(yq_raw '[.databases[].roles[]? | select(.passwordSecret)] | length' "$values" 2>/dev/null || echo "0")"
   if [[ "$pw_count" == "0" ]]; then
     pass "No passwordSecret in database roles (cert-only)"
   else
@@ -164,7 +169,7 @@ preview_scenario() {
   check_not_empty "$values" '.pgadmin4.tls.issuerName' "pgadmin4.tls.issuerName"
   check_not_empty "$values" '.pgadmin4.tls.issuerKind' "pgadmin4.tls.issuerKind"
   local tls_dns_count
-  tls_dns_count="$(yq '.pgadmin4.tls.dnsNames | length' "$values" 2>/dev/null || echo "0")"
+  tls_dns_count="$(yq_raw '.pgadmin4.tls.dnsNames | length' "$values" 2>/dev/null || echo "0")"
   if [[ "$tls_dns_count" -gt 0 ]]; then
     pass "pgadmin4.tls.dnsNames: $tls_dns_count entries"
   else
@@ -181,7 +186,7 @@ preview_scenario() {
 
   echo "  [pgAdmin password secret]"
   local pw_create
-  pw_create="$(yq '.pgadmin4.defaultPasswordCreate // "true"' "$values")"
+  pw_create="$(yq_raw '.pgadmin4.defaultPasswordCreate // "true"' "$values")"
   if [[ "$env" == "local" ]]; then
     if [[ "$pw_create" == "true" ]]; then
       pass "defaultPasswordCreate = true (local env)"
@@ -198,7 +203,7 @@ preview_scenario() {
 
   echo "  [Roles with database access]"
   local roles_with_dbs
-  roles_with_dbs="$(yq '[.roles[] | select(.databases)] | length' "$values" 2>/dev/null || echo "0")"
+  roles_with_dbs="$(yq_raw '[.roles[] | select(.databases)] | length' "$values" 2>/dev/null || echo "0")"
   if [[ "$roles_with_dbs" -gt 0 ]]; then
     pass "roles with .databases: $roles_with_dbs role(s)"
   else
@@ -207,31 +212,31 @@ preview_scenario() {
 
   echo "  [Primary/Replica]"
   local is_primary
-  is_primary="$(yq '.isPrimary' "$values")"
+  is_primary="$(yq_raw '.isPrimary' "$values")"
   info "isPrimary = $is_primary"
 
   echo "  [Replication]"
   local repl_enabled
-  repl_enabled="$(yq '.replication.enabled' "$values")"
+  repl_enabled="$(yq_raw '.replication.enabled' "$values")"
   info "replication.enabled = $repl_enabled"
 
   if [[ "$repl_enabled" == "true" ]]; then
     check_not_empty "$values" '.replication.primaryDatacenter' "replication.primaryDatacenter"
 
     local primary_dc
-    primary_dc="$(yq '.replication.primaryDatacenter' "$values")"
+    primary_dc="$(yq_raw '.replication.primaryDatacenter' "$values")"
     local cluster_name
-    cluster_name="$(yq '.clusterName' "$values")"
+    cluster_name="$(yq_raw '.clusterName' "$values")"
 
     # Check external clusters exist
     local ext_count
-    ext_count="$(yq '.externalClusters | length' "$values" 2>/dev/null || echo "0")"
+    ext_count="$(yq_raw '.externalClusters | length' "$values" 2>/dev/null || echo "0")"
     if [[ "$ext_count" -gt 0 ]]; then
       pass "externalClusters: $ext_count defined"
 
       # Check external cluster names follow pattern: CLUSTER_NAME-DC
       local ext_names
-      ext_names="$(yq '.externalClusters[].name' "$values")"
+      ext_names="$(yq_raw '.externalClusters[].name' "$values")"
       while IFS= read -r name; do
         if echo "$name" | grep -q "^${cluster_name}-"; then
           pass "External cluster '$name' follows naming pattern"
@@ -242,7 +247,7 @@ preview_scenario() {
 
       # Check replica paths include DC mention
       local ext_paths
-      ext_paths="$(yq '.externalClusters[].barmanObjectStore.destinationPath' "$values")"
+      ext_paths="$(yq_raw '.externalClusters[].barmanObjectStore.destinationPath' "$values")"
       while IFS= read -r path; do
         if echo "$path" | grep -q "${ins}-${env}-.*-replica"; then
           pass "Replica path '$path' contains DC mention"
@@ -326,11 +331,11 @@ preview_scenario() {
 
     # Verify DC domain suffix SANs in server cert
     local dc_dns_suffix
-    dc_dns_suffix="$(yq '.datacenter.dnsSuffix' "$values")"
+    dc_dns_suffix="$(yq_raw '.datacenter.dnsSuffix' "$values")"
     local cluster_name_val
-    cluster_name_val="$(yq '.clusterName' "$values")"
+    cluster_name_val="$(yq_raw '.clusterName' "$values")"
     local ns_val
-    ns_val="$(yq '.namespace' "$values")"
+    ns_val="$(yq_raw '.namespace' "$values")"
     if echo "$template_output" | grep -q "${cluster_name_val}-rw.${ns_val}.${dc_dns_suffix}"; then
       pass "Server cert has DC domain suffix SANs"
     else
@@ -353,7 +358,7 @@ preview_scenario() {
 
     # Verify roles with .databases have pg_hba rules
     local roles_db_yaml
-    roles_db_yaml="$(yq '.roles[] | select(.databases) | .name' "$values" 2>/dev/null || echo "")"
+    roles_db_yaml="$(yq_raw '.roles[] | select(.databases) | .name' "$values" 2>/dev/null || echo "")"
     if [[ -n "$roles_db_yaml" ]]; then
       while IFS= read -r role_name; do
         [[ -z "$role_name" ]] && continue
@@ -413,7 +418,7 @@ preview_scenario() {
     # Verify NetworkPolicy
     echo "  [NetworkPolicy]"
     local team_env_val
-    team_env_val="$(yq '.teamEnv' "$values")"
+    team_env_val="$(yq_raw '.teamEnv' "$values")"
     if [[ "$team_env_val" == "local" ]]; then
       if echo "$template_output" | grep -q "kind: NetworkPolicy"; then
         fail "NetworkPolicy should not be created for local env"
@@ -552,12 +557,12 @@ else
       user_dir="$CONFS_DIR/users/$ins/$env"
       [[ -f "$user_dir/databases.yaml" ]] || continue
 
-      dcs="$(yq ".clients.\"$ins\".datacenters[]" "$clients_file" 2>/dev/null)"
+      dcs="$(yq_raw ".clients.\"$ins\".datacenters[]" "$clients_file" 2>/dev/null)"
       while IFS= read -r dc; do
         [[ -z "$dc" ]] && continue
         preview_scenario "$ins" "$env" "$dc"
       done <<< "$dcs"
-    done < <(yq '.clients | keys | .[]' "$clients_file" 2>/dev/null)
+    done < <(yq_raw '.clients | keys | .[]' "$clients_file" 2>/dev/null)
   done
 fi
 

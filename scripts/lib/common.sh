@@ -5,6 +5,11 @@ _COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$_COMMON_DIR/.." && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPTS_DIR/.." && pwd)"
 
+# Strip quotes from yq scalar output (handles yq versions that quote strings)
+yq_raw() {
+  yq "$@" | tr -d '"'
+}
+
 CORE_DIR="$PROJECT_ROOT/core"
 CONFS_DIR="$PROJECT_ROOT/confs"
 ADMIN_DIR="$CONFS_DIR/admin"
@@ -84,7 +89,7 @@ resolve_kube_context() {
   fi
 
   local ctx
-  ctx="$(yq ".datacenters.\"$dc\".kubeContext // \"\"" "$dc_file")"
+  ctx="$(yq_raw ".datacenters.\"$dc\".kubeContext // \"\"" "$dc_file")"
   if [[ -n "$ctx" ]]; then
     KUBE_CONTEXT="$ctx"
   fi
