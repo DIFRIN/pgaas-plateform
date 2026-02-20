@@ -1,5 +1,5 @@
 .PHONY: help generate create delete status promote demote upgrade \
-       infra-install infra-delete template template-infra preview clean check-tools
+       infra-install infra-delete infra-test template template-infra preview clean check-tools
 
 SCRIPTS_DIR := scripts
 CONFS_DIR   := confs
@@ -21,6 +21,7 @@ help: ## Show this help
 	@echo "Local infrastructure:"
 	@echo "  make infra-install [DC=local1]  Deploy SeaweedFS + OpenLDAP + cert-manager CA"
 	@echo "  make infra-delete  [DC=local1]  Destroy local infrastructure"
+	@echo "  make infra-test    [DC=local1]  Test SeaweedFS S3 + OpenLDAP connectivity"
 	@echo ""
 	@echo "Development:"
 	@echo "  make check-tools     Check required CLI tools"
@@ -60,6 +61,9 @@ infra-install: ## Deploy local infrastructure (auto-generates values from admin/
 
 infra-delete: ## Destroy local infrastructure
 	@$(SCRIPTS_DIR)/delete-local-infra.sh $(DC)
+
+infra-test: ## Test SeaweedFS S3 + OpenLDAP connectivity
+	@$(SCRIPTS_DIR)/test-local-infra.sh $(DC)
 
 # --- Development helpers ---
 

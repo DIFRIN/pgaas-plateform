@@ -25,6 +25,14 @@ spec:
     - {{ include "pgaas.clusterName" . }}-rw.{{ .Values.namespace }}.{{ .Values.datacenter.dnsSuffix }}
     - {{ include "pgaas.clusterName" . }}-r.{{ .Values.namespace }}.{{ .Values.datacenter.dnsSuffix }}
     - {{ include "pgaas.clusterName" . }}-ro.{{ .Values.namespace }}.{{ .Values.datacenter.dnsSuffix }}
+    {{- if and .Values.dns.primaryFqdn .Values.isPrimary }}
+    # Primary DNS alias (follows primary — added only on the primary cluster)
+    - {{ .Values.dns.primaryFqdn }}
+    {{- end }}
+    {{- if .Values.dns.roFqdn }}
+    # Read-only DNS alias (static per DC)
+    - {{ .Values.dns.roFqdn }}
+    {{- end }}
   usages:
     - server auth
     - digital signature

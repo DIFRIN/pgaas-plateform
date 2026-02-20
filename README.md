@@ -4,79 +4,47 @@ Platform-managed CloudNativePG PostgreSQL clusters provisioned per client (INS c
 
 ## Architecture Overview
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Platform Team (Admin)                     │
-│  Defines: PG versions, resource limits, backup policies,         │
-│           datacenter configs, available plugins, pgAdmin user    │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │ admin values (HIGH priority)
-                           ▼
-                  ┌─────────────────┐
-                  │ generate-values  │◄── merge strategy:
-                  │     .sh          │    admin overrides user
-                  └────────┬────────┘
-                           │
-         user values       │      computed values
-         (LOW priority)    │      (cluster name, S3 paths,
-              ▲            │       namespace, DC config)
-              │            ▼
-┌─────────────┴───┐  ┌──────────┐   ┌──────────────────┐
-│  Client (User)   │  │_generated│──►│   Helm/Helmfile   │
-│  Defines: DBs,   │  │ values   │   │   Deploy to K8s   │
-│  roles, PG ver,  │  └──────────┘   └──────────────────┘
-│  plugins         │
-└─────────────────┘
+```mermaid
+flowchart TD
+    PT["**Platform Team (Admin)**\nDefines: PG versions, resource limits,\nbackup policies, datacenter configs,\navailable plugins, pgAdmin user"]
+    GV["**generate-values.sh**\nmerge strategy: admin overrides user"]
+    CL["**Client (User)**\nDefines: DBs, roles, PG ver, plugins"]
+    GEN["**_generated values**\n(cluster name, S3 paths,\nnamespace, DC config)"]
+    HH["**Helm/Helmfile**\nDeploy to K8s"]
+
+    PT -->|"admin values (HIGH priority)"| GV
+    CL -->|"user values (LOW priority)"| GV
+    GV --> GEN
+    GEN --> HH
 ```
 
 ### Per-Instance Cluster Topology
 
 Each client (INS) instance is deployed as an independent CNPG cluster per datacenter, with pgAdmin backed by LDAP and backups to S3. When replication is enabled, a replica cluster in a second DC continuously replays WAL from the primary's S3 archive. Both clusters have the **same symmetric architecture** — a designated primary instance plus cascading standbys — and the operator creates all three services (`-rw`, `-ro`, `-r`) on both. The replica cluster's designated primary is in continuous recovery mode (read-only); it can be promoted to a full primary at any time.
 
-```
-           ┌──────────────────────────────────────────────────────────────────────────────┐
-           │                     S3 Bucket: INS-ENV-bucket                                │
-           │               (same bucket, replicated between DCs)                          │
-           │                                                                              │
-           │  Object paths (DC in path avoids collisions):                                │
-           │    INS-ENV-dc1-backup/    ← DC1 writes its backups here                      │
-           │    INS-ENV-dc2-backup/    ← DC2 writes its backups here                      │
-           │    INS-ENV-dc1-replica/   ← DC2 externalClusters reads DC1's archive here    │
-           │    INS-ENV-dc2-replica/   ← DC1 externalClusters reads DC2's archive here    │
-           │                                                                              │
-           └──────────────▲───────────────────────────────────▲───────────────────────────┘
-                          │                                   │
-     ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┼─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┼ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
-    │  Datacenter 1 (DC1) │              │                    │    Datacenter 2 (DC2)     │
-       K8s Cluster        │                                   │    K8s Cluster
-    │                     │              │                    │                           │
-      ┌───────────────────┴──────┐          ┌─────────────────┴────────────────────────┐
-    │ │  CNPG Cluster (PRIMARY)  │   │      │  CNPG Cluster (REPLICA)                  │  │
-      │                          │          │  (only if replication enabled)            │
-    │ │  ┌────────┐ ┌────┐ ┌──┐ │    │      │  ┌────────┐ ┌────┐ ┌──┐                 │  │
-      │  │   RW   │ │ R  │ │RO│ │   WAL     │  │   RW   │ │ R  │ │RO│                 │
-    │ │  │primary │ │read│ │ro│ │───via ───►│  │desig.  │ │read│ │ro│                 │  │
-      │  │ (write)│ │svc │ │  │ │   S3      │  │primary │ │svc │ │  │                 │
-    │ │  └────────┘ └────┘ └──┘ │   │       │  │(recov.)│ └────┘ └──┘                 │  │
-      │                          │          │  └────────┘                               │
-    │ └──────────────────────────┘   │      │  Same services; writes blocked until      │  │
-                    │                       │  promoted to primary                       │
-    │               │                  │      └───────────────────────────────────────────┘  │
-                    │                                          │
-    │               ▼ mTLS (cert-only)│                        ▼ mTLS                     │
-      ┌───────────────────────┐           ┌───────────────────────┐
-    │ │  pgAdmin4 (HTTPS/443) │         │ │  pgAdmin4 (HTTPS/443) │                       │
-      │  Shared DB connections│           │  Shared DB connections│
-    │ │  via pgadmin_readonly │         │ │  via pgadmin_readonly │                       │
-      └───────────┬───────────┘           └───────────┬───────────┘
-    │             │ LDAP bind           │             │ LDAP bind                         │
-                  ▼                                   ▼
-    │     ┌──────────────┐              │     ┌──────────────┐                            │
-          │ LDAP Server  │                    │ LDAP Server  │
-    │     │ (OpenLDAP or │              │     │ (OpenLDAP or │                            │
-          │  corporate)  │                    │  corporate)  │
-    │     └──────────────┘              │     └──────────────┘                            │
-     ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+```mermaid
+flowchart TD
+    S3["**S3 Bucket: INS-ENV-bucket**\n(same bucket, replicated between DCs)\n\nINS-ENV-dc1-backup/ ← DC1 writes backups\nINS-ENV-dc2-backup/ ← DC2 writes backups\nINS-ENV-dc1-replica/ ← DC2 reads DC1 archive\nINS-ENV-dc2-replica/ ← DC1 reads DC2 archive"]
+
+    subgraph DC1["Datacenter 1 (DC1) — K8s Cluster"]
+        C1["**CNPG Cluster (PRIMARY)**\nRW (primary/write) | R (read) | RO (ro)"]
+        PGA1["**pgAdmin4** (HTTPS/443)\nShared DB connections\nvia pgadmin_readonly"]
+        LDAP1["**LDAP Server**\n(OpenLDAP or corporate)"]
+        C1 -->|"mTLS cert-only"| PGA1
+        PGA1 -->|"LDAP bind"| LDAP1
+    end
+
+    subgraph DC2["Datacenter 2 (DC2) — K8s Cluster"]
+        C2["**CNPG Cluster (REPLICA)**\nonly if replication enabled\nRW (recovery, read-only until promoted)\nR (read) | RO (ro)"]
+        PGA2["**pgAdmin4** (HTTPS/443)\nShared DB connections\nvia pgadmin_readonly"]
+        LDAP2["**LDAP Server**\n(OpenLDAP or corporate)"]
+        C2 -->|"mTLS cert-only"| PGA2
+        PGA2 -->|"LDAP bind"| LDAP2
+    end
+
+    C1 -->|"WAL via S3"| C2
+    C1 <-->|"write backups / read WAL"| S3
+    C2 <-->|"write backups / read WAL"| S3
 ```
 
 **Key points:**
@@ -94,36 +62,25 @@ Each client (INS) instance is deployed as an independent CNPG cluster per datace
 
 PGaaS deploys one independent Kubernetes cluster per datacenter. This is a deliberate choice over stretched/extended K8s clusters (which span multiple datacenters under a single control plane) — those require low-latency inter-DC networking, complex overlay configurations, and introduce a single etcd quorum as a cross-DC failure domain. Instead, each datacenter runs its own fully autonomous K8s cluster with its own control plane, etcd, CNPG operator, and cert-manager CA.
 
-```
-                         ┌─────────────────────────────────────────────────┐
-                         │                  S3 Bucket                      │
-                         │              (replicated between DCs)           │
-                         │                                                 │
-                         │  ic1-prod-dc1-backup/   ic1-prod-dc2-backup/   │
-                         │  ic1-prod-dc1-replica/  ic1-prod-dc2-replica/  │
-                         └──────────┬──────────────────────┬──────────────┘
-                                    │                      │
-            ┌───────────────────────┼──────────────────────┼────────────────────────┐
-            │                       │                      │                        │
-  ┌─────────▼──────────┐  ┌────────▼─────────┐  ┌────────▼─────────┐  ┌───────────▼─────────┐
-  │   S3 Server DC1     │  │  S3 Server DC2   │  │   S3 Server DC1   │  │   S3 Server DC2     │
-  │ s3.dc1.example.com  │  │ s3.dc2.example.com│  │ s3.dc1.example.com│  │ s3.dc2.example.com  │
-  └─────────▲──────────┘  └────────▲─────────┘  └────────▲─────────┘  └───────────▲─────────┘
-            │ write backups         │ read WAL             │ read WAL               │ write backups
-            │                      │ (recovery)           │ (recovery)             │
-  ┌─────────┴──────────┐                        ┌────────┴──────────┐
-  │ K8s Cluster — DC1   │                        │ K8s Cluster — DC2  │
-  │                     │                        │                    │
-  │  ┌───────────────┐  │                        │  ┌──────────────┐  │
-  │  │ CNPG Cluster   │  │    WAL streaming      │  │ CNPG Cluster  │  │
-  │  │ (PRIMARY)      │──┼── via S3 archive ────►│  │ (REPLICA)     │  │
-  │  │                │  │                        │  │               │  │
-  │  │ RW/R/RO svc    │  │                        │  │ RW/R/RO svc   │  │
-  │  └───────────────┘  │                        │  └──────────────┘  │
-  │                     │                        │                    │
-  │  cert-manager CA    │                        │  cert-manager CA   │
-  │  CNPG operator      │                        │  CNPG operator     │
-  └─────────────────────┘                        └────────────────────┘
+```mermaid
+flowchart TD
+    S3B["**S3 Bucket** (replicated between DCs)\nic1-prod-dc1-backup/   ic1-prod-dc2-backup/\nic1-prod-dc1-replica/  ic1-prod-dc2-replica/"]
+
+    subgraph DC1["K8s Cluster — DC1"]
+        S3S1["S3 Server DC1\ns3.dc1.example.com"]
+        K1["**CNPG Cluster (PRIMARY)**\nRW / R / RO svc\ncert-manager CA\nCNPG operator"]
+    end
+
+    subgraph DC2["K8s Cluster — DC2"]
+        S3S2["S3 Server DC2\ns3.dc2.example.com"]
+        K2["**CNPG Cluster (REPLICA)**\nRW / R / RO svc\ncert-manager CA\nCNPG operator"]
+    end
+
+    S3B <-->|"replicated"| S3S1
+    S3B <-->|"replicated"| S3S2
+    S3S1 <-->|"write backups"| K1
+    S3S2 <-->|"write backups / read WAL (recovery)"| K2
+    K1 -->|"WAL streaming via S3 archive"| K2
 ```
 
 ### One K8s cluster per datacenter
@@ -217,6 +174,97 @@ datacenters:
       endpoint: "http://192.168.49.2:30333"   # same SeaweedFS, same endpoint
 ```
 
+## DNS Transparency — Primary/Replica Switchover
+
+Clients connect to DNS aliases that abstract away the physical primary location. When the primary switches datacenter, only the DNS record changes — clients reconnect without any configuration update.
+
+### DNS Alias Model
+
+```mermaid
+flowchart LR
+    subgraph Clients["Client Applications"]
+        APP1["App DC1\n(any env)"]
+        APP2["App DC2\n(any env)"]
+    end
+
+    subgraph DNS["DNS Aliases"]
+        PDNS["**primary.{ins}-{env}.{zone}**\nRW endpoint — follows primary\nupdated on switchover"]
+        RODNS1["**ro-dc1.{ins}-{env}.{zone}**\nRead-only DC1\nalways points to DC1"]
+        RODNS2["**ro-dc2.{ins}-{env}.{zone}**\nRead-only DC2\nalways points to DC2"]
+    end
+
+    subgraph DC1["DC1"]
+        RW1["CNPG -rw svc\n(primary or replica)"]
+        RO1["CNPG -ro svc"]
+    end
+
+    subgraph DC2["DC2"]
+        RW2["CNPG -rw svc\n(replica or primary)"]
+        RO2["CNPG -ro svc"]
+    end
+
+    APP1 -->|"writes"| PDNS
+    APP2 -->|"writes"| PDNS
+    APP1 -->|"local reads"| RODNS1
+    APP2 -->|"local reads"| RODNS2
+
+    PDNS -->|"currently DC1 primary"| RW1
+    RODNS1 --> RO1
+    RODNS2 --> RO2
+```
+
+### Alias Semantics
+
+| Alias | Points to | Changes on switchover? |
+|-------|-----------|------------------------|
+| `primary.{ins}-{env}.{zone}` | RW service of whichever DC holds the primary | **Yes** — updated by `promote-cluster.sh` |
+| `ro-dc1.{ins}-{env}.{zone}` | DC1's RO service | No — static per DC |
+| `ro-dc2.{ins}-{env}.{zone}` | DC2's RO service | No — static per DC |
+
+### Configuration
+
+DNS aliases are configured per environment in `datacenters.yaml`:
+
+```yaml
+# confs/admin/prod/datacenters.yaml
+dns:
+  zone: example.com
+  primaryPrefix: primary    # primary.{ins}-{env}.example.com
+
+datacenters:
+  dc1:
+    dnsSuffix: dc1.example.com
+    dns:
+      roPrefix: ro-dc1      # ro-dc1.{ins}-{env}.example.com
+    s3:
+      endpoint: https://s3.dc1.example.com
+  dc2:
+    dnsSuffix: dc2.example.com
+    dns:
+      roPrefix: ro-dc2
+    s3:
+      endpoint: https://s3.dc2.example.com
+```
+
+Generated values expose the computed FQDNs:
+
+```yaml
+dns:
+  primaryFqdn: "primary.ic1-prod.example.com"
+  roFqdn: "ro-dc1.ic1-prod.example.com"
+  zone: "example.com"
+```
+
+### DNS Update on Switchover
+
+`promote-cluster.sh` automatically updates the primary DNS alias after promotion. For local environments, it patches the CoreDNS ConfigMap. For production, hook the `scripts/update-dns.sh` to your DNS provider's API.
+
+```bash
+# After promote:
+#   primary.ic1-prod.example.com → prod-ic1-dc2-rw.ic1-prod.dc2.example.com
+make promote INS=ic1 ENV=prod DC=dc2 DEMOTION_TOKEN=<token>
+```
+
 ## Directory Structure
 
 ```
@@ -235,7 +283,7 @@ pgaas/
 │   │   ├── local/                        # Local development environment
 │   │   │   ├── postgresql.yaml           # PG params, instances, storage profiles, ImageCatalog
 │   │   │   ├── clients.yaml              # Client registry: DCs, S3/LDAP creds, storage profile
-│   │   │   ├── datacenters.yaml          # DC list with S3 endpoints + DNS suffix
+│   │   │   ├── datacenters.yaml          # DC list with S3 endpoints + DNS suffix + DNS aliases
 │   │   │   ├── backup.yaml               # Schedule, retention
 │   │   │   ├── plugins.yaml              # Available CNPG plugins
 │   │   │   ├── seaweedfs.yaml            # SeaweedFS S3 config (local only)
@@ -278,6 +326,7 @@ pgaas/
 │       ├── scheduled-backup.yaml         # ScheduledBackup CRD
 │       ├── databases.yaml                # Database CRDs (loop, skip bootstrap DB)
 │       ├── certificates.yaml             # Server + client TLS certs (signed by root CA)
+│       ├── dnsendpoint.yaml              # ExternalDNS DNSEndpoint CRD (RO alias per DC)
 │       ├── s3-credentials-secret.yaml    # S3 credentials secret (local env only)
 │       ├── networkpolicy.yaml            # NetworkPolicy for namespace isolation
 │       └── rbac.yaml                     # RBAC Role + RoleBindings
@@ -297,6 +346,8 @@ pgaas/
     ├── promote-cluster.sh
     ├── demote-cluster.sh
     ├── upgrade-cluster.sh                # Rolling image upgrade
+    ├── update-dns.sh                     # DNS alias update (primary alias on switchover)
+    ├── test-local-infra.sh               # Test SeaweedFS + OpenLDAP connectivity
     ├── install-local-infra.sh
     └── delete-local-infra.sh
 ```
@@ -413,14 +464,22 @@ The S3 endpoint URL comes from the **current datacenter** (the one being deploye
 
 ```yaml
 # confs/admin/prod/datacenters.yaml
+dns:
+  zone: example.com
+  primaryPrefix: primary
+
 datacenters:
   dc1:
     dnsSuffix: dc1.example.com
+    dns:
+      roPrefix: ro-dc1
     s3:
       endpoint: https://s3.dc1.example.com   # Used when DC=dc1
       region: eu-west-1
   dc2:
     dnsSuffix: dc2.example.com
+    dns:
+      roPrefix: ro-dc2
     s3:
       endpoint: https://s3.dc2.example.com   # Used when DC=dc2
       region: eu-central-1
@@ -430,23 +489,16 @@ datacenters:
 
 ### Priority Model
 
-```
-  User values (low priority)        Admin values (high priority)
-  ─────────────────────────         ──────────────────────────────
-  databases.yaml                    postgresql.yaml (overrides PG params)
-  ├── postgresql.majorVersion       backup.yaml     (overrides schedule)
-  ├── databases[]                   plugins.yaml    (available plugins ref)
-  ├── roles[]                       clients.yaml    (DC, S3, storage profile, creds)
-  └── plugins[]                     datacenters.yaml (S3 endpoints)
-          │                                 │
-          └────────┐          ┌─────────────┘
-                   ▼          ▼
-            ┌──────────────────────┐
-            │   yq deep merge      │  admin wins on conflicts
-            │   + computed values   │
-            └──────────┬───────────┘
-                       ▼
-              _generated/values.yaml
+```mermaid
+flowchart TD
+    UV["**User values** (low priority)\ndatabases.yaml\n├── postgresql.majorVersion\n├── databases[]\n├── roles[]\n└── plugins[]"]
+    AV["**Admin values** (high priority)\npostgresql.yaml (overrides PG params)\nbackup.yaml (overrides schedule)\nplugins.yaml (available plugins ref)\nclients.yaml (DC, S3, storage profile, creds)\ndatacenters.yaml (S3 endpoints, DNS)"]
+    MERGE["**yq deep merge**\nadmin wins on conflicts\n+ computed values"]
+    GEN["**_generated/values.yaml**"]
+
+    UV --> MERGE
+    AV --> MERGE
+    MERGE --> GEN
 ```
 
 **Merge tool:** `yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)'` (deep merge, second file wins)
@@ -480,6 +532,7 @@ generate-values.sh <INS> <ENV> [DC]
 ├─ 4b. Resolve storage profile → storage.size + resources
 ├─ 5.  Lookup current DC S3 endpoint + DNS suffix from datacenters.yaml
 ├─ 5b. Resolve per-client S3 credentials (inline or Vault secret ref)
+├─ 5c. Compute DNS aliases (primaryFqdn, roFqdn) from datacenters.yaml dns config
 ├─ 6.  Compute: clusterName, namespace, S3 destination paths (INS-ENV-DC-backup)
 ├─ 7.  Merge all into final values
 ├─ 8.  Add pgAdmin4 config: mTLS connection, LDAP (all envs), TLS dnsNames
@@ -653,36 +706,24 @@ This ensures the certificate CN must exactly match the PostgreSQL role name. Cli
 
 ## TLS Certificate Chain
 
-```
-┌──────────────────────────────────────────────┐
-│           cert-manager                        │
-│                                               │
-│  ┌─────────────────────┐                     │
-│  │ Self-Signed Issuer   │ (bootstrap)         │
-│  └──────────┬──────────┘                     │
-│             ▼                                 │
-│  ┌─────────────────────┐                     │
-│  │ Root CA Certificate  │ pgaas-root-ca       │
-│  └──────────┬──────────┘                     │
-│             ▼                                 │
-│  ┌─────────────────────┐                     │
-│  │ ClusterIssuer        │ pgaas-ca-issuer     │
-│  │ (available to all    │                     │
-│  │  namespaces)         │                     │
-│  └──────────┬──────────┘                     │
-└─────────────┼────────────────────────────────┘
-              │ signs directly
-    ┌─────────┼──────────────────────────────┐
-    │  Client Namespace (per INS/ENV)         │
-    │         │                               │
-    │         ├────────────┬────────────┐     │
-    │         ▼            ▼            ▼     │
-    │  ┌─────────────┐ ┌──────────┐ ┌──────┐│
-    │  │Server TLS    │ │Client TLS│ │pgAdmin││
-    │  │Certificate   │ │Certs     │ │Server ││
-    │  │(CNPG cluster)│ │(per user)│ │TLS    ││
-    │  └─────────────┘ └──────────┘ └──────┘│
-    └────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    SI["Self-Signed Issuer\n(bootstrap)"]
+    RC["Root CA Certificate\npgaas-root-ca"]
+    CI["ClusterIssuer\npgaas-ca-issuer\navailable to all namespaces"]
+
+    SI -->|signs| RC
+    RC --> CI
+
+    subgraph NS["Client Namespace (per INS/ENV)"]
+        ST["Server TLS Certificate\n(CNPG cluster)"]
+        CT["Client TLS Certs\n(per user/role)"]
+        PT["pgAdmin Server TLS"]
+    end
+
+    CI -->|signs directly| ST
+    CI -->|signs directly| CT
+    CI -->|signs directly| PT
 ```
 
 The root CA is deployed as a plain K8s manifest (`manifests/cert-manager-ca.yaml`). It creates:
@@ -820,16 +861,32 @@ clients:
 ### datacenters.yaml
 
 ```yaml
+# Global DNS config (shared across DCs)
+dns:
+  zone: example.com
+  primaryPrefix: primary    # builds: primary.{ins}-{env}.example.com
+
 datacenters:
   dc1:
     dnsSuffix: dc1.example.com
+    dns:
+      roPrefix: ro-dc1      # builds: ro-dc1.{ins}-{env}.example.com
     s3:
       endpoint: https://s3.dc1.example.com
       region: eu-west-1
+  dc2:
+    dnsSuffix: dc2.example.com
+    dns:
+      roPrefix: ro-dc2
+    s3:
+      endpoint: https://s3.dc2.example.com
+      region: eu-central-1
 ```
 
 The `dnsSuffix` is used to build the CNPG service FQDN for external access:
 `{clusterName}-rw.{namespace}.{dnsSuffix}` (e.g., `dev1-ic1-rw.ic1-dev1.dc1.example.com`).
+
+The `dns` block drives DNS alias computation in `generate-values.sh` and DNS record updates in `promote-cluster.sh`.
 
 S3 credentials are **not** in datacenters.yaml — they are per-client in `clients.yaml`.
 
@@ -876,21 +933,19 @@ openldap:
 
 pgAdmin connects to CNPG clusters via mutual TLS (mTLS) with shared database connections. The pgAdmin UI is served over HTTPS with a TLS certificate managed by the pgAdmin subchart.
 
-```
-┌────────────────────┐     HTTPS + LDAP auth     ┌────────────────┐
-│     User browser   │ ──────────────────────────►│   pgAdmin4     │
-│  (login/password)  │                            │  (port 443)    │
-└────────────────────┘                            │  Shared DB     │
-                                                  │  connections   │
-                          ┌───────────────────────│  (cert auth)   │
-                          │                       └────────┬───────┘
-                          │ verify-full mTLS               │
-                          │ (tls.crt + tls.key + ca.crt)   │
-                          ▼                                │
-                   ┌──────────────┐                        │
-                   │ CNPG Cluster │◄───────────────────────┘
-                   │ (PostgreSQL) │
-                   └──────────────┘
+```mermaid
+sequenceDiagram
+    participant B as User Browser
+    participant P as pgAdmin4 (HTTPS/443)
+    participant L as LDAP Server
+    participant C as CNPG Cluster (PostgreSQL)
+
+    B->>P: HTTPS login (username/password)
+    P->>L: LDAP bind + search
+    L-->>P: auth result
+    P->>C: mTLS (tls.crt + tls.key + ca.crt)<br/>SSLMode: verify-full
+    C-->>P: query result
+    P-->>B: page response
 ```
 
 - pgAdmin is served over **HTTPS** (port 443) with a cert-manager TLS certificate managed by the subchart
@@ -1020,6 +1075,7 @@ make upgrade    INS=ic1 ENV=prod DC=dc1   # Rolling image upgrade
 # Local infrastructure
 make infra-install    # Deploy storage class + cert-manager CA + SeaweedFS + OpenLDAP
 make infra-delete     # Destroy local infrastructure
+make infra-test       # Test SeaweedFS + OpenLDAP connectivity
 
 # Development
 make check-tools                        # Check required CLI tools
@@ -1067,6 +1123,9 @@ make create INS=ic1 ENV=local
 
 # 3. Check status
 make status INS=ic1 ENV=local
+
+# 4. Test infrastructure connectivity
+make infra-test
 ```
 
 ## Deployment Model — User Values Repository
@@ -1115,16 +1174,16 @@ make create INS=ic1 ENV=prod DC=dc1
 
 ### Cluster Creation
 
-```
-┌─────────┐    ┌──────────────┐    ┌──────────────┐    ┌───────────────┐
-│  Admin   │    │ generate-    │    │  helmfile     │    │ CNPG Operator │
-│ registers│───►│ values.sh    │───►│  apply        │───►│ creates pods  │
-│ client   │    │              │    │              │    │               │
-└─────────┘    └──────────────┘    └──────────────┘    └───────────────┘
-     │                │                    │                    │
-     │  clients.yaml  │  _generated/       │  Helm release     │  Cluster CRD
-     │  + databases   │  values.yaml       │  deployed         │  + pods ready
-     │  .yaml         │                    │                   │
+```mermaid
+flowchart LR
+    A["Admin\nregisters client"] --> GV["generate-values.sh"]
+    GV --> HF["helmfile apply"]
+    HF --> OP["CNPG Operator\ncreates pods"]
+
+    A -. "clients.yaml\n+ databases.yaml" .-> GV
+    GV -. "_generated/\nvalues.yaml" .-> HF
+    HF -. "Helm release\ndeployed" .-> OP
+    OP -. "Cluster CRD\n+ pods ready" .-> OP
 ```
 
 1. Register the client in `confs/admin/{env}/clients.yaml` with `storageProfile`, `s3Bucket`, `s3Credentials`, `ldapCredentials`
@@ -1136,17 +1195,14 @@ make create INS=ic1 ENV=prod DC=dc1
 
 Zero-downtime PostgreSQL image upgrades using CNPG's built-in rolling update mechanism.
 
-```
-┌──────────┐    ┌──────────────┐    ┌──────────────┐    ┌───────────────┐
-│  Admin   │    │ generate +   │    │    CNPG       │    │   Done        │
-│ updates  │───►│ helmfile     │───►│  rolling      │───►│               │
-│ image tag│    │ apply        │    │  update       │    │               │
-└──────────┘    └──────────────┘    └──────────────┘    └───────────────┘
-     │                │                    │                    │
-     │ imageCatalog   │ ImageCatalog       │ 1. Update replicas│ All pods on
-     │ new tag        │ CRD updated        │ 2. Switchover     │ new image
-     │                │                    │ 3. Update old     │
-     │                │                    │    primary        │
+```mermaid
+flowchart LR
+    A["Admin\nupdates image tag"] --> GH["generate +\nhelmfile apply"]
+    GH --> RU["CNPG rolling update\n1. Update replicas\n2. Switchover\n3. Update old primary"]
+    RU --> D["Done\nAll pods on new image"]
+
+    A -. "imageCatalog\nnew tag" .-> GH
+    GH -. "ImageCatalog\nCRD updated" .-> RU
 ```
 
 **Steps:**
@@ -1170,21 +1226,25 @@ The `primaryUpdateStrategy: unsupervised` and `primaryUpdateMethod: switchover` 
 
 Graceful primary failover for planned maintenance (e.g., DC maintenance window).
 
-```
-        DC1 (Primary)                    DC2 (Replica)
-       ┌─────────────┐                 ┌─────────────┐
-       │  Cluster     │ ───repl───────►│  Cluster     │
-       │  (primary)   │                 │  (replica)   │
-       └──────┬───────┘                 └──────┬───────┘
-              │                                │
-   Step 1: demote-cluster               Step 2: promote-cluster
-   (generates demotion token)           (uses demotion token)
-              │                                │
-              ▼                                ▼
-       ┌─────────────┐                 ┌─────────────┐
-       │  Cluster     │ ◄──repl───────│  Cluster     │
-       │  (replica)   │                 │  (primary)   │
-       └─────────────┘                 └─────────────┘
+```mermaid
+sequenceDiagram
+    participant DC1 as DC1 (Primary)
+    participant DC2 as DC2 (Replica)
+    participant DNS as DNS
+
+    Note over DC1,DC2: Initial state: DC1 is primary
+    DC1->>DC2: WAL replication (S3)
+
+    Note over DC1: Step 1: demote-cluster
+    DC1->>DC1: Generate demotion token
+    DC1-->>DC2: (operator: start demotion)
+
+    Note over DC2: Step 2: promote-cluster
+    DC2->>DC2: Promote to primary (with token)
+    DC2->>DNS: Update primary alias → DC2 RW svc
+
+    DC2->>DC1: WAL replication (S3)
+    Note over DC1,DC2: DC2 is now primary
 ```
 
 **Steps:**
@@ -1201,29 +1261,31 @@ Graceful primary failover for planned maintenance (e.g., DC maintenance window).
    ```
    The demotion token comes from the **other** K8s cluster (the demoted DC), so it must be passed explicitly.
 
+3. `promote-cluster.sh` automatically updates the primary DNS alias (`primary.{ins}-{env}.{zone}`) to point to the new primary's RW service.
+
 ### Force Promote (Disaster Recovery)
 
 Emergency promotion when the primary datacenter is lost.
 
-```
-        DC1 (Primary - LOST)             DC2 (Replica)
-       ┌─────────────┐                 ┌─────────────┐
-       │  Cluster     │ ───X───────────│  Cluster     │
-       │  (OFFLINE)   │                 │  (replica)   │
-       └─────────────┘                 └──────┬───────┘
-                                               │
-                                    promote-cluster
-                                    (no demotion token)
-                                               │
-                                               ▼
-                                        ┌─────────────┐
-                                        │  Cluster     │
-                                        │  (primary)   │
-                                        └─────────────┘
+```mermaid
+flowchart LR
+    subgraph DC1_lost["DC1 (Primary — LOST)"]
+        C1["Cluster\nOFFLINE"]
+    end
+    subgraph DC2["DC2 (Replica)"]
+        C2["Cluster\n(replica)"]
+        C2P["Cluster\n(primary)"]
+    end
+    DNS["DNS\nprimary alias"]
 
-  After DC1 recovers:
-  ─────────────────────
-  Rebuild DC1 cluster as replica of DC2
+    C1 -. "X (unreachable)" .-> C2
+    C2 -->|"promote-cluster\n(no demotion token)"| C2P
+    C2P -->|"update DNS"| DNS
+
+    subgraph recovery["After DC1 recovers"]
+        C1R["Rebuild DC1\nas replica of DC2"]
+    end
+    C2P --> C1R
 ```
 
 **Steps:**
@@ -1234,7 +1296,9 @@ Emergency promotion when the primary datacenter is lost.
    ```
    The script will warn about the DR scenario and prompt for confirmation.
 
-2. After DC1 recovers, rebuild the DC1 cluster as a replica of DC2.
+2. `promote-cluster.sh` updates the primary DNS alias to DC2's RW service.
+
+3. After DC1 recovers, rebuild the DC1 cluster as a replica of DC2.
 
 ## Primary/Replica Behavior
 
@@ -1334,6 +1398,8 @@ This guide covers setting up a local multi-datacenter environment using two mini
 - [yq](https://github.com/mikefarah/yq) v4.x
 - [cert-manager](https://cert-manager.io/) (installed per cluster below)
 - [CNPG operator](https://cloudnative-pg.io/) (installed per cluster below)
+- `aws` CLI or `curl` (for SeaweedFS S3 testing)
+- `ldapsearch` (for OpenLDAP testing, part of `ldap-utils`)
 
 Check tools: `make check-tools`
 
@@ -1395,26 +1461,34 @@ datacenters:
       region: us-east-1
 ```
 
-### 6. Deploy primary cluster on cluster1
+### 6. Test local infrastructure
+
+```bash
+make infra-test
+```
+
+This verifies SeaweedFS S3 API (bucket create/put/get/delete) and OpenLDAP LDAP connectivity on all DCs.
+
+### 7. Deploy primary cluster on cluster1
 
 ```bash
 make create INS=ic1 ENV=local DC=local1
 ```
 
-### 7. Deploy replica cluster on cluster2
+### 8. Deploy replica cluster on cluster2
 
 ```bash
 make create INS=ic1 ENV=local DC=local2
 ```
 
-### 8. Verify
+### 9. Verify
 
 ```bash
 make status INS=ic1 ENV=local DC=local1   # primary
 make status INS=ic1 ENV=local DC=local2   # replica
 ```
 
-### 9. Test switchover
+### 10. Test switchover
 
 ```bash
 # Demote primary (cluster1)
@@ -1423,6 +1497,7 @@ make demote INS=ic1 ENV=local DC=local1 NEW_PRIMARY=local-ic1-local2
 
 # Promote replica (cluster2) with the token
 make promote INS=ic1 ENV=local DC=local2 DEMOTION_TOKEN=<token>
+# promote-cluster.sh also updates the primary DNS alias
 ```
 
 ### Single-DC shortcut
@@ -1460,5 +1535,6 @@ minikube delete -p cluster2
 - [yq](https://github.com/mikefarah/yq) v4.x (for value generation)
 - kubectl configured for target cluster
 - (Real envs) [HashiCorp Vault](https://www.vaultproject.io/) or [external-secrets-operator](https://external-secrets.io/) for S3 credential and LDAP bind password synchronization
+- (Real envs) [ExternalDNS](https://github.com/kubernetes-sigs/external-dns) for automatic DNS alias management
 
 Run `make check-tools` to verify all required CLI tools are installed.

@@ -1,13 +1,21 @@
+dns:
+  zone: pgaas.local
+  primaryPrefix: primary    # primary.{ins}-{env}.pgaas.local
+
 datacenters:
   local1:
     kubeContext: cluster1
     dnsSuffix: svc.cluster.local
+    dns:
+      roPrefix: ro-local1   # ro-local1.{ins}-{env}.pgaas.local
     s3:
       endpoint: "http://CLUSTER1_IP:SEAWEEDFS_NODEPORT"
       region: us-east-1
   local2:
     kubeContext: cluster2
     dnsSuffix: svc.cluster.local
+    dns:
+      roPrefix: ro-local2   # ro-local2.{ins}-{env}.pgaas.local
     s3:
       endpoint: "http://CLUSTER1_IP:SEAWEEDFS_NODEPORT"
       region: us-east-1
