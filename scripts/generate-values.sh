@@ -138,6 +138,20 @@ fi
 S3_ENDPOINT="$(echo "$DC_S3_CONFIG" | yq_raw '.endpoint')"
 S3_REGION="$(echo "$DC_S3_CONFIG" | yq_raw '.region')"
 
+# --- Step 5c: Compute DNS aliases from datacenters.yaml dns config ---
+DNS_ZONE="$(yq_raw '.dns.zone // ""' "$DC_FILE")"
+DNS_PRIMARY_PREFIX="$(yq_raw '.dns.primaryPrefix // "primary"' "$DC_FILE")"
+DNS_RO_PREFIX="$(echo "$DC_CONFIG" | yq_raw '.dns.roPrefix // ""')"
+
+DNS_PRIMARY_FQDN=""
+DNS_RO_FQDN=""
+if [[ -n "$DNS_ZONE" ]]; then
+  DNS_PRIMARY_FQDN="${DNS_PRIMARY_PREFIX}.${INS}-${ENV}.${DNS_ZONE}"
+  if [[ -n "$DNS_RO_PREFIX" ]]; then
+    DNS_RO_FQDN="${DNS_RO_PREFIX}.${INS}-${ENV}.${DNS_ZONE}"
+  fi
+fi
+
 # --- Step 5b: Resolve per-client S3 credentials ---
 # Local env: inline accessKey/secretKey strings in clients.yaml
 # Real envs: reference a Vault-synced K8s secret name
@@ -207,6 +221,10 @@ $S3_CREDS_YAML
 replication:
   enabled: $REPLICATION_ENABLED
   primaryDatacenter: $PRIMARY_DC
+dns:
+  zone: ${DNS_ZONE}
+  primaryFqdn: ${DNS_PRIMARY_FQDN}
+  roFqdn: ${DNS_RO_FQDN}
 EOF
 )"
 

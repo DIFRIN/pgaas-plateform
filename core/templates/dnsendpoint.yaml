@@ -1,0 +1,37 @@
+{{- /*
+  DNSEndpoint CRD (ExternalDNS) for the read-only DNS alias.
+
+  The RO alias (ro-dc1.{ins}-{env}.{zone}) is static per datacenter and is
+  created/updated whenever the cluster is deployed. It always points to the
+  local cluster's -ro service (hot-standby reads within the same DC).
+
+  The primary DNS alias (primary.{ins}-{env}.{zone}) is NOT managed here — it
+  is updated dynamically by promote-cluster.sh after each switchover, so that
+  it always points to whichever DC currently holds the primary.
+
+  Requires ExternalDNS with the externaldns.k8s.io/v1alpha1 CRD to be
+  installed in the cluster. Skip this template if ExternalDNS is not in use —
+  it is safe to have the CRD uninstalled; Helm will error only when the CRD is
+  absent and this template renders a resource with that apiVersion.
+*/ -}}
+{{- if and .Values.dns.roFqdn (ne .Values.dns.roFqdn "") }}
+apiVersion: externaldns.k8s.io/v1alpha1
+kind: DNSEndpoint
+metadata:
+  name: {{ include "pgaas.clusterName" . }}-ro-dns
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "pgaas.labels" . | nindent 4 }}
+  annotations:
+    # Managed by PGaaS — do not edit manually
+    pgaas.io/dns-alias: ro
+    pgaas.io/datacenter: {{ .Values.datacenter.name }}
+spec:
+  endpoints:
+    - dnsName: {{ .Values.dns.roFqdn }}
+      recordTTL: 60
+      recordType: CNAME
+      targets:
+        # CNPG -ro service FQDN within this DC
+        - {{ include "pgaas.clusterName" . }}-ro.{{ .Values.namespace }}.{{ .Values.datacenter.dnsSuffix }}
+{{- end }}

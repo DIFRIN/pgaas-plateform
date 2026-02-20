@@ -88,3 +88,30 @@ fi
 echo ""
 echo "==> Cluster $CLUSTER_NAME promotion initiated"
 echo "    Monitor with: make status INS=$INS ENV=$ENV DC=$DC"
+
+# --- DNS alias update ---
+# After promotion, update the primary DNS alias to point to this DC's RW service.
+# The generated values file contains the computed DNS FQDNs.
+GENERATED_VALUES="$GENERATED_DIR/${INS}-${ENV}/values.yaml"
+if [[ -f "$GENERATED_VALUES" ]]; then
+  DNS_PRIMARY_FQDN="$(yq_raw '.dns.primaryFqdn // ""' "$GENERATED_VALUES")"
+  DC_DNS_SUFFIX="$(yq_raw '.datacenter.dnsSuffix // ""' "$GENERATED_VALUES")"
+
+  if [[ -n "$DNS_PRIMARY_FQDN" && -n "$DC_DNS_SUFFIX" ]]; then
+    # Target: the RW service FQDN on this (now primary) DC
+    TARGET_FQDN="${CLUSTER_NAME}-rw.${NAMESPACE}.${DC_DNS_SUFFIX}"
+    echo ""
+    echo "==> Updating primary DNS alias"
+    echo "    $DNS_PRIMARY_FQDN  →  $TARGET_FQDN"
+    "$SCRIPTS_DIR/update-dns.sh" "$DNS_PRIMARY_FQDN" "$TARGET_FQDN" "${KUBE_CONTEXT:-}" || \
+      echo "    WARNING: DNS update failed — update $DNS_PRIMARY_FQDN manually"
+  else
+    echo ""
+    echo "    No DNS config in generated values — skipping primary alias update"
+    echo "    (Run 'make generate INS=$INS ENV=$ENV DC=$DC' to regenerate values with DNS config)"
+  fi
+else
+  echo ""
+  echo "    Generated values not found ($GENERATED_VALUES)"
+  echo "    Run 'make generate INS=$INS ENV=$ENV DC=$DC' first to enable DNS alias update"
+fi

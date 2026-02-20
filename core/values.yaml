@@ -82,6 +82,14 @@ replication:
   enabled: false
   primaryDatacenter: ""
 
+# DNS aliases — computed by generate-values.sh from datacenters.yaml dns config
+# primaryFqdn: follows the current primary (updated on switchover by promote-cluster.sh)
+# roFqdn:      always points to this DC's read-only service (static per DC)
+dns:
+  zone: ""
+  primaryFqdn: ""
+  roFqdn: ""
+
 externalClusters: []
 
 # cert-manager CA issuer (from manifests/cert-manager-ca.yaml)
