@@ -67,6 +67,23 @@ spec:
       - pgaas {{ .Values.pgadminUser.name }} {{ .Values.pgadminUser.name }}
       {{- end }}
 
+  # Monitoring — built-in Prometheus exporter on :9187
+  {{- if .Values.monitoring.enabled }}
+  monitoring:
+    {{- if .Values.monitoring.disableDefaultQueries }}
+    disableDefaultQueries: true
+    {{- end }}
+    {{- if .Values.monitoring.tls }}
+    tls:
+      enabled: true
+    {{- end }}
+    {{- if .Values.monitoring.customQueries }}
+    customQueriesConfigMap:
+      - name: {{ include "pgaas.clusterName" . }}-monitoring-queries
+        key: queries.yaml
+    {{- end }}
+  {{- end }}
+
   # Enable TLS for all connections
   enableSuperuserAccess: false
 

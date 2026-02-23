@@ -551,6 +551,33 @@
         }
       },
       "additionalProperties": false
+    },
+    "monitoring": {
+      "type": "object",
+      "description": "CNPG built-in Prometheus exporter configuration (:9187/metrics)",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable CNPG metrics exporter and inject customQueriesConfigMap"
+        },
+        "tls": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable HTTPS on the metrics port (uses the same cert as PostgreSQL)"
+        },
+        "customQueries": {
+          "type": "boolean",
+          "default": true,
+          "description": "Inject the per-cluster custom queries ConfigMap into the CNPG cluster"
+        },
+        "disableDefaultQueries": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable the operator-installed cnpg-default-monitoring ConfigMap"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

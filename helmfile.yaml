@@ -37,3 +37,14 @@ releases:
       service: openldap
     values:
       - confs/_generated/local-infra/openldap-values.yaml
+
+  # --- Local Infrastructure: Observability (Prometheus + OTel Collector + Grafana) ---
+  - name: pgaas-observability
+    chart: ./local-infra/observability
+    namespace: local-infra
+    createNamespace: true
+    labels:
+      component: local-infra
+      service: observability
+    values:
+      - confs/_generated/local-infra/observability-values.yaml

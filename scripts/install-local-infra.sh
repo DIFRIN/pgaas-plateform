@@ -76,6 +76,9 @@ for dc in "${DCS[@]}"; do
   if [[ "$FIRST_DC" == "true" ]]; then
     echo "    Deploying SeaweedFS (shared, on first DC only)..."
     hfile -f "$PROJECT_ROOT/helmfile.yaml" -l "component=local-infra" -l "service=seaweedfs" apply
+
+    echo "    Deploying Observability stack (shared, on first DC only)..."
+    hfile -f "$PROJECT_ROOT/helmfile.yaml" -l "component=local-infra" -l "service=observability" apply
     FIRST_DC=false
   fi
 done
@@ -100,4 +103,11 @@ if [[ "$SEAWEEDFS_NODEPORT" != "N/A" && "$CLUSTER_IP" != "N/A" ]]; then
   echo ""
   echo "    Update confs/admin/local/datacenters.yaml s3.endpoint with this URL"
   echo "    for all datacenters (both DCs share the same SeaweedFS instance)."
+fi
+
+GRAFANA_NODEPORT=$(kctl get svc grafana -n local-infra -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "N/A")
+if [[ "$GRAFANA_NODEPORT" != "N/A" && "$CLUSTER_IP" != "N/A" ]]; then
+  echo ""
+  echo "    Grafana available at:   http://${CLUSTER_IP}:${GRAFANA_NODEPORT}"
+  echo "    Grafana credentials:    admin / admin (see confs/admin/local/observability.yaml)"
 fi

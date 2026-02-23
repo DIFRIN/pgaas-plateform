@@ -448,3 +448,33 @@ $SEED_USERS"
 fi
 
 echo "==> Generated: $OUTPUT_DIR/values.yaml"
+
+# --- Step 11: Generate observability values if local env ---
+# Only generated once (not per-client); reads clients.yaml to build Grafana folder list.
+if [[ "$ENV" == "local" ]]; then
+  OBS_FILE="$ADMIN_ENV_DIR/observability.yaml"
+  if [[ -f "$OBS_FILE" ]]; then
+    echo ""
+    echo "==> Generating local-infra/observability-values.yaml"
+
+    # Base values from admin observability.yaml (unwrap top-level 'observability' key)
+    OBS_BASE="$(yq '.observability' "$OBS_FILE")"
+
+    # Build clients list from all clients that have a local env directory
+    CLIENTS_YAML="clients:"
+    for client_dir in "$USERS_DIR"/*/local; do
+      [[ -d "$client_dir" ]] || continue
+      client_ins="$(basename "$(dirname "$client_dir")")"
+      CLIENTS_YAML="$CLIENTS_YAML
+  - ins: ${client_ins}
+    env: local"
+    done
+
+    # Flatten observability sub-keys into top-level chart values and append clients list
+    OBS_VALUES="$(echo "$OBS_BASE" | yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' - <(echo "$CLIENTS_YAML"))"
+    echo "$OBS_VALUES" > "$INFRA_OUTPUT_DIR/observability-values.yaml"
+    echo "    Generated: local-infra/observability-values.yaml"
+  else
+    echo "    (no confs/admin/local/observability.yaml — skipping observability values)"
+  fi
+fi

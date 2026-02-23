@@ -97,6 +97,18 @@ certificates:
   issuerName: pgaas-ca-issuer
   issuerKind: ClusterIssuer
 
+# Monitoring — CNPG built-in Prometheus exporter (:9187/metrics)
+# OTel Collector in local-infra scrapes pods by label cnpg.io/cluster
+monitoring:
+  enabled: false
+  # Enable HTTPS on the metrics port (uses the same server cert as PostgreSQL)
+  # Set false for local env (plain HTTP, simpler OTel scrape)
+  tls: false
+  # Custom queries ConfigMap injected into cnpg cluster spec
+  customQueries: true
+  # Disable the default cnpg-default-monitoring queries (keep them)
+  disableDefaultQueries: false
+
 # pgAdmin4 subchart - mTLS connections to CNPG, LDAP auth
 pgadmin4:
   enabled: true

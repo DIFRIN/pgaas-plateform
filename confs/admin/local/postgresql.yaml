@@ -1,3 +1,9 @@
+monitoring:
+  enabled: true
+  tls: false        # plain HTTP for local env — no TLS on :9187
+  customQueries: true
+  disableDefaultQueries: false
+
 postgresql:
   instances: 1
   storage:

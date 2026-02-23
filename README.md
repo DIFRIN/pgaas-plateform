@@ -281,13 +281,14 @@ pgaas/
 ├── confs/                                # All configuration (admin + user + generated)
 │   ├── admin/                            # Admin (platform team) values - HIGH priority
 │   │   ├── local/                        # Local development environment
-│   │   │   ├── postgresql.yaml           # PG params, instances, storage profiles, ImageCatalog
+│   │   │   ├── postgresql.yaml           # PG params, instances, storage profiles, ImageCatalog, monitoring
 │   │   │   ├── clients.yaml              # Client registry: DCs, S3/LDAP creds, storage profile
 │   │   │   ├── datacenters.yaml          # DC list with S3 endpoints + DNS suffix + DNS aliases
 │   │   │   ├── backup.yaml               # Schedule, retention
 │   │   │   ├── plugins.yaml              # Available CNPG plugins
 │   │   │   ├── seaweedfs.yaml            # SeaweedFS S3 config (local only)
-│   │   │   └── openldap.yaml             # OpenLDAP config (local only)
+│   │   │   ├── openldap.yaml             # OpenLDAP config (local only)
+│   │   │   └── observability.yaml        # Prometheus/Grafana/OTel settings (local only)
 │   │   ├── hp/                           # HP environment (sub-envs: dev1, dev2, pic...)
 │   │   │   ├── ldap.yaml                 # LDAP server config (per-env)
 │   │   │   └── ...
@@ -311,7 +312,8 @@ pgaas/
 │       ├── {INS}-{ENV}/values.yaml       # Merged cluster values
 │       └── local-infra/                  # Local infrastructure values
 │           ├── seaweedfs-values.yaml
-│           └── openldap-values.yaml
+│           ├── openldap-values.yaml
+│           └── observability-values.yaml # Generated from observability.yaml + clients list
 │
 ├── core/                                 # Main Helm chart
 │   ├── Chart.yaml                        # Dependencies: pgadmin4 subchart
@@ -326,6 +328,7 @@ pgaas/
 │       ├── scheduled-backup.yaml         # ScheduledBackup CRD
 │       ├── databases.yaml                # Database CRDs (loop, skip bootstrap DB)
 │       ├── certificates.yaml             # Server + client TLS certs (signed by root CA)
+│       ├── monitoring-queries-cm.yaml    # Custom Prometheus queries injected into CNPG exporter
 │       ├── dnsendpoint.yaml              # ExternalDNS DNSEndpoint CRD (RO alias per DC)
 │       ├── s3-credentials-secret.yaml    # S3 credentials secret (local env only)
 │       ├── networkpolicy.yaml            # NetworkPolicy for namespace isolation
@@ -333,7 +336,17 @@ pgaas/
 │
 ├── local-infra/                          # Local infrastructure charts
 │   ├── seaweedfs/                        # Local S3 for Barman backups
-│   └── openldap/                         # Local LDAP for pgAdmin4
+│   ├── openldap/                         # Local LDAP for pgAdmin4
+│   └── observability/                    # Prometheus + OTel Collector + Grafana
+│       ├── Chart.yaml
+│       ├── values.yaml
+│       └── templates/
+│           ├── prometheus.yaml           # StatefulSet + PVC + Service (remote_write receiver)
+│           ├── otel-collector.yaml       # ClusterRole + ConfigMap + Deployment + Service
+│           ├── grafana.yaml              # Deployment + NodePort Service (+ optional Ingress)
+│           ├── grafana-provisioning-cm.yaml        # Prometheus datasource + folder providers
+│           ├── grafana-dashboards-admin.yaml        # "PGaaS Admin" folder dashboard
+│           └── grafana-dashboards-clients.yaml      # Per-client folder dashboards (range loop)
 │
 └── scripts/                              # All operational scripts
     ├── lib/                              # Shared shell libraries
@@ -542,8 +555,10 @@ generate-values.sh <INS> <ENV> [DC]
 │
 └─ (local env only)
    ├─ 11. Generate confs/_generated/local-infra/seaweedfs-values.yaml
-   └─ 12. Generate confs/_generated/local-infra/openldap-values.yaml
-          (auto-generates one LDAP user per client: cn=INS, uid=INS, mail=mail@INS.local)
+   ├─ 12. Generate confs/_generated/local-infra/openldap-values.yaml
+   │       (auto-generates one LDAP user per client: cn=INS, uid=INS, mail=mail@INS.local)
+   └─ 13. Generate confs/_generated/local-infra/observability-values.yaml
+           (merges observability.yaml settings + clients list for Grafana folder provisioning)
 ```
 
 ## CNPG ImageCatalog
@@ -815,6 +830,13 @@ pgadminUser:
   name: pgadmin_readonly
   roles:
     - pg_read_all_data
+
+# Monitoring — CNPG built-in Prometheus exporter on :9187
+monitoring:
+  enabled: true
+  tls: false              # false = HTTP (local); true = HTTPS (prod)
+  customQueries: true
+  disableDefaultQueries: false
 ```
 
 ### clients.yaml
@@ -897,6 +919,30 @@ backup:
   schedule: "0 0 1 * * *"
   retentionPolicy: "14d"
   target: prefer-standby
+```
+
+### observability.yaml (local env only)
+
+```yaml
+observability:
+  prometheus:
+    retention: 15d
+    storage:
+      size: 10Gi
+      storageClass: standard
+
+  grafana:
+    adminPassword: admin
+    ingress:
+      enabled: false
+      host: ""
+
+  otelCollector:
+    scrape:
+      interval: 30s
+      tls: false
+    operatorEndpoint: "http://cnpg-controller-manager-metrics-service.cnpg-system.svc.cluster.local:8080"
+    operatorTls: false
 ```
 
 ### seaweedfs.yaml (local env only)
@@ -992,10 +1038,189 @@ For local development, one LDAP user is auto-generated per client during value g
 ### Local Environment Wiring
 
 ```
-pgAdmin4 ──── LDAP ────► OpenLDAP     (local-infra namespace, port 389)
-pgAdmin4 ──── mTLS ────► CNPG Cluster (client namespace, port 5432)
-CNPG     ──── S3   ────► SeaweedFS    (local-infra namespace, port 8333)
+pgAdmin4      ──── LDAP ────► OpenLDAP      (local-infra namespace, port 389)
+pgAdmin4      ──── mTLS ────► CNPG Cluster  (client namespace, port 5432)
+CNPG          ──── S3   ────► SeaweedFS     (local-infra namespace, port 8333)
+OTel Collector ─── scrape ──► CNPG :9187   (k8s_sd, all client namespaces)
+OTel Collector ─── scrape ──► CNPG operator :8080 (cnpg-system namespace)
+OTel Collector ─── remote_write ──► Prometheus (local-infra namespace, port 9090)
+Grafana       ──── datasource ──► Prometheus (local-infra namespace)
 ```
+
+## Observability
+
+PGaaS ships a full local observability stack. It uses the **CNPG built-in Prometheus exporter** (no sidecars) and routes metrics through an OpenTelemetry Collector to Prometheus, visualised in Grafana.
+
+### Architecture
+
+```mermaid
+flowchart TD
+    subgraph ClientNS["Client namespace (per INS/ENV)"]
+        PG["CNPG Pod\nPostgreSQL"]
+        EXP[":9187/metrics\nBuilt-in exporter\n(cnpg_metrics_exporter)\npg_monitor role"]
+        QCFG["monitoring-queries ConfigMap\n(custom SQL queries)\ncnpg.io/reload label"]
+        PG --- EXP
+        QCFG -->|"injected via\ncustomQueriesConfigMap"| EXP
+    end
+
+    subgraph LocalInfra["local-infra namespace"]
+        OC["OTel Collector\n(otelcol-contrib)\nk8s_sd pod discovery"]
+        PROM["Prometheus\n--web.enable-remote-write-receiver\n:9090"]
+        GRAF["Grafana\n:3000 NodePort"]
+    end
+
+    subgraph CnpgSystem["cnpg-system namespace"]
+        OP["CNPG Operator\n:8080/metrics\n(kubebuilder)"]
+    end
+
+    EXP -->|"HTTP scrape\n(k8s label: cnpg.io/cluster)"| OC
+    OP  -->|"HTTP scrape\n(static config)"| OC
+    OC  -->|"remote_write"| PROM
+    PROM -->|"datasource"| GRAF
+```
+
+**Key design choices:**
+- CNPG's built-in exporter already runs `pg_monitor`-level queries internally — no extra user or sidecar needed
+- `monitoring.tls: false` for local (plain HTTP on `:9187`); set to `true` for prod (HTTPS, OTel uses `insecureSkipVerify`)
+- OTel Collector holds a `ClusterRole` to discover CNPG pods across all namespaces via `kubernetes_sd`
+- Operator metrics cover reconcile errors, duration (p95), and queue depth
+- Deployed once on the first DC (shared, like SeaweedFS)
+
+### Metrics
+
+**Built-in (from CNPG default `cnpg-default-monitoring` ConfigMap):**
+
+| Metric | Description |
+|--------|-------------|
+| `cnpg_collector_up` | Instance health (1=up) |
+| `cnpg_pg_stat_database_numbackends` | Active connections per database |
+| `cnpg_pg_stat_database_xact_commit_total` | Committed transactions |
+| `cnpg_pg_stat_database_blks_hit_total` / `blks_read_total` | Cache hits/misses |
+| `cnpg_pg_stat_database_deadlocks_total` | Deadlocks per database |
+| `cnpg_pg_archive_command_status_failed_count` | WAL archive failures |
+| `cnpg_pg_wal_files_total` | WAL file count |
+| `cnpg_pg_replication_lag_seconds` | Replication lag (seconds) |
+| `cnpg_pg_stat_bgwriter_*` | Checkpoint and background writer stats |
+| `controller_runtime_reconcile_*` | Operator reconcile rate, errors, duration |
+
+**Custom (from per-cluster `{clusterName}-monitoring-queries` ConfigMap):**
+
+| Metric prefix | Description |
+|---------------|-------------|
+| `cnpg_pg_database_size_size_bytes` | Per-database size in bytes |
+| `cnpg_pg_activity_count` | Connection count by database + state |
+| `cnpg_pg_activity_max_query_duration_seconds` | Longest running query per state |
+| `cnpg_pg_stat_user_tables_n_dead_tup` | Dead tuples per table (vacuum health) |
+| `cnpg_pg_stat_user_tables_seconds_since_autovacuum` | Time since last autovacuum |
+| `cnpg_pg_replication_lag_seconds` | Replication lag (also in default set) |
+| `cnpg_pg_replication_slots_detail_active` | Replication slot active status |
+| `cnpg_pg_replication_slots_detail_flush_lag_bytes` | Logical slot consumer lag |
+| `cnpg_pg_temp_files_temp_bytes` | Temp file bytes written per database |
+
+The custom ConfigMap carries `cnpg.io/reload: ""` — the CNPG operator picks up changes without a rolling restart.
+
+### Labels (added by OTel Collector relabeling)
+
+| Label | Source | Example |
+|-------|--------|---------|
+| `cluster` | `cnpg.io/cluster` pod label | `local-ic1` |
+| `ins` | `pgaas.io/ins` pod label | `ic1` |
+| `env` | `pgaas.io/env` pod label | `local` |
+| `role` | `cnpg.io/instanceRole` pod label | `primary` / `replica` |
+| `namespace` | Pod namespace | `ic1-local` |
+| `pod` | Pod name | `local-ic1-1` |
+
+### Grafana Dashboards
+
+Two sets of dashboards are automatically provisioned:
+
+**PGaaS Admin folder** — all clusters:
+
+| Panel | Query |
+|-------|-------|
+| Instances Up / Down | `cnpg_collector_up` count |
+| Total active connections | Sum of `numbackends` |
+| WAL archive failures | `archive_command_status_failed_count` |
+| Max replication lag | Max `pg_replication_lag_seconds` |
+| Operator reconcile errors | `controller_runtime_reconcile_errors_total` |
+| Active connections per cluster (time series) | `numbackends` by cluster |
+| Transaction rate / TPS (time series) | `xact_commit + xact_rollback` rate |
+| Replication lag per instance (time series) | `pg_replication_lag_seconds` |
+| WAL files per cluster (time series) | `pg_wal_files_total` |
+| Database sizes (bar gauge) | `pg_database_size_size_bytes` |
+| Cache hit ratio per cluster (time series) | `blks_hit / (blks_hit + blks_read)` |
+| Operator reconcile duration p95 | `controller_runtime_reconcile_time_seconds` histogram |
+| Dead tuples top-10 tables | `pg_stat_user_tables_n_dead_tup` topk |
+
+**Per-client folders (`{ins}`)** — filtered by `ins` label, one dashboard per client:
+
+| Panel | Query |
+|-------|-------|
+| Active connections / Cache ratio / TPS / Deadlocks / Replication lag / Temp files | Stat panels |
+| Active connections by database (time series) | `numbackends{ins="..."}` |
+| Transaction rate by database (time series) | `xact_commit + xact_rollback` rate |
+| Cache hit ratio by database (time series) | `blks_hit / (blks_hit + blks_read)` |
+| Replication lag over time (time series) | `pg_replication_lag_seconds{ins="..."}` |
+| Database sizes (bar gauge) | `pg_database_size_size_bytes{ins="..."}` |
+| Connections by state (time series) | `pg_activity_count` by state |
+| Dead tuples top-10 tables | `pg_stat_user_tables_n_dead_tup{ins="..."}` topk |
+| Max query duration by state (time series) | `pg_activity_max_query_duration_seconds` |
+
+Grafana folder provisioning is driven by the `clients:` list in `observability-values.yaml` (generated from `clients.yaml` during `generate-values.sh`). Adding a new client automatically creates a new Grafana folder on the next `infra-install` or Helm upgrade.
+
+### Configuration
+
+**Enable monitoring per environment** (`confs/admin/{env}/postgresql.yaml`):
+
+```yaml
+monitoring:
+  enabled: true
+  tls: false              # false = HTTP :9187 (local); true = HTTPS (prod, OTel uses insecureSkipVerify)
+  customQueries: true     # inject {clusterName}-monitoring-queries ConfigMap
+  disableDefaultQueries: false   # keep cnpg-default-monitoring queries
+```
+
+**Observability stack settings** (`confs/admin/local/observability.yaml`):
+
+```yaml
+observability:
+  prometheus:
+    retention: 15d
+    storage:
+      size: 10Gi
+      storageClass: standard
+
+  grafana:
+    adminPassword: admin      # change for production
+    ingress:
+      enabled: false
+      host: ""
+
+  otelCollector:
+    scrape:
+      interval: 30s
+      tls: false              # matches monitoring.tls above
+    operatorEndpoint: "http://cnpg-controller-manager-metrics-service.cnpg-system.svc.cluster.local:8080"
+    operatorTls: false        # operator metrics default to HTTP
+```
+
+### TLS on the metrics endpoint (production)
+
+When `monitoring.tls: true`, CNPG serves metrics over HTTPS using the same server certificate as PostgreSQL. Because that certificate's SANs contain service names (e.g., `local-ic1-rw`) rather than pod IPs, the OTel Collector must use `insecure_skip_verify: true` for pod-level scraping. Set both flags consistently:
+
+```yaml
+# confs/admin/{env}/postgresql.yaml
+monitoring:
+  tls: true
+
+# confs/admin/{env}/observability.yaml
+observability:
+  otelCollector:
+    scrape:
+      tls: true     # enables HTTPS scheme + insecure_skip_verify in OTel config
+```
+
+For the operator metrics, enable TLS by setting `METRICS_CERT_DIR` in the operator pod and setting `operatorTls: true`.
 
 ## NetworkPolicy — Namespace Isolation
 
@@ -1073,7 +1298,7 @@ make demote     INS=ic1 ENV=dev1 NEW_PRIMARY=dev1-is1
 make upgrade    INS=ic1 ENV=prod DC=dc1   # Rolling image upgrade
 
 # Local infrastructure
-make infra-install    # Deploy storage class + cert-manager CA + SeaweedFS + OpenLDAP
+make infra-install    # Deploy storage class + cert-manager CA + SeaweedFS + OpenLDAP + Observability
 make infra-delete     # Destroy local infrastructure
 make infra-test       # Test SeaweedFS + OpenLDAP connectivity
 
@@ -1328,6 +1553,7 @@ Releases:
 - **cluster**: Core chart with `confs/_generated/{INS}-{ENV}/values.yaml`, requires `INS`, `ENV`, `NAMESPACE`, `CLUSTER_NAME` env vars
 - **seaweedfs**: S3-compatible storage in local-infra namespace
 - **openldap**: LDAP server in local-infra namespace
+- **pgaas-observability**: Prometheus + OTel Collector + Grafana in local-infra namespace (local env only, deployed on first DC)
 
 The cert-manager CA is deployed as a plain K8s manifest (`manifests/cert-manager-ca.yaml`) via `kubectl apply` before helmfile runs.
 
@@ -1439,7 +1665,7 @@ helm upgrade --install cnpg cnpg/cloudnative-pg --kube-context cluster2 -n cnpg-
 make infra-install
 ```
 
-This deploys cert-manager CA + OpenLDAP on both clusters, and SeaweedFS on cluster1 only (shared). At the end it prints the SeaweedFS NodePort URL.
+This deploys cert-manager CA + OpenLDAP on both clusters, and SeaweedFS + the observability stack (Prometheus, OTel Collector, Grafana) on cluster1 only (shared). At the end it prints the SeaweedFS NodePort URL and the Grafana NodePort URL.
 
 ### 5. Update S3 endpoint
 
