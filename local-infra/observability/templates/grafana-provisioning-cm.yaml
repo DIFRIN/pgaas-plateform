@@ -1,0 +1,52 @@
+---
+# Grafana datasource: Prometheus (fixed UID "prometheus" used in all dashboard JSONs)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: {{ .Release.Namespace }}
+data:
+  prometheus.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        url: http://prometheus.{{ .Release.Namespace }}.svc.cluster.local:9090
+        access: proxy
+        isDefault: true
+        editable: false
+        jsonData:
+          timeInterval: {{ .Values.otelCollector.scrape.interval }}
+---
+# Grafana dashboard providers — one entry per folder (admin + one per client).
+# Grafana reads all JSON files from each path and assigns them to the named folder.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-providers
+  namespace: {{ .Release.Namespace }}
+data:
+  providers.yaml: |
+    apiVersion: 1
+    providers:
+      - name: admin
+        orgId: 1
+        folder: PGaaS Admin
+        folderUid: pgaas-admin
+        type: file
+        disableDeletion: true
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/admin
+{{- range .Values.clients }}
+      - name: client-{{ .ins }}
+        orgId: 1
+        folder: "{{ .ins }}"
+        folderUid: pgaas-client-{{ .ins }}
+        type: file
+        disableDeletion: true
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/clients/{{ .ins }}
+{{- end }}

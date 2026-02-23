@@ -1,0 +1,47 @@
+prometheus:
+  image: prom/prometheus:v2.51.2
+  retention: 15d
+  storage:
+    size: 10Gi
+    storageClass: standard
+  resources:
+    requests: { memory: 256Mi, cpu: 100m }
+    limits:   { memory: 512Mi, cpu: 500m }
+
+otelCollector:
+  # otelcol-contrib is required for prometheus receiver + k8s_sd + prometheusremotewrite
+  image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.102.0
+  resources:
+    requests: { memory: 128Mi, cpu: 50m }
+    limits:   { memory: 256Mi, cpu: 200m }
+  scrape:
+    # Interval between scrapes of CNPG metrics endpoints
+    interval: 30s
+    # Whether CNPG metrics are served over HTTPS (mirrors monitoring.tls in core chart)
+    # false = HTTP (local default), true = HTTPS with insecureSkipVerify
+    tls: false
+  # CNPG operator metrics service (HTTP, port 8080)
+  # Adjust if your operator is installed in a different namespace/name
+  operatorEndpoint: "http://cnpg-controller-manager-metrics-service.cnpg-system.svc.cluster.local:8080"
+  # Operator metrics TLS — the operator supports TLS via METRICS_CERT_DIR env.
+  # false = HTTP (default install), true = HTTPS with insecureSkipVerify
+  operatorTls: false
+
+grafana:
+  image: grafana/grafana:11.1.0
+  adminPassword: admin
+  resources:
+    requests: { memory: 128Mi, cpu: 100m }
+    limits:   { memory: 256Mi, cpu: 200m }
+  ingress:
+    enabled: false
+    host: ""
+
+# Populated by generate-values.sh — one entry per client with a local env.
+# Used to generate per-client dashboard folders in Grafana.
+# Example:
+#   - ins: ic1
+#     env: local
+#   - ins: is1
+#     env: local
+clients: []

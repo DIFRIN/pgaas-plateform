@@ -1,0 +1,313 @@
+---
+# Admin dashboard: all CNPG clusters — health, WAL, replication, connections, sizes.
+# Metric naming: cnpg_<query_name>_<column_name> from the built-in exporter.
+# Labels added by OTel Collector relabeling: cluster, ins, env, role, namespace, pod.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-admin
+  namespace: {{ .Release.Namespace }}
+data:
+  cluster-overview.json: |
+    {
+      "title": "PGaaS \u2014 Cluster Overview",
+      "uid": "pgaas-admin-overview",
+      "description": "Admin view: all CNPG clusters health, WAL, replication and resource usage",
+      "tags": ["pgaas", "admin", "cnpg"],
+      "schemaVersion": 39,
+      "version": 1,
+      "graphTooltip": 1,
+      "time": { "from": "now-3h", "to": "now" },
+      "refresh": "1m",
+      "templating": {
+        "list": [
+          {
+            "name": "cluster",
+            "label": "Cluster",
+            "type": "query",
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "query": "label_values(cnpg_collector_up, cluster)",
+            "multi": true,
+            "includeAll": true,
+            "current": { "text": "All", "value": "$__all" }
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Instances Up",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "red",   "value": null },
+                { "color": "green", "value": 1 }
+              ]},
+              "unit": "short"
+            }
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "count(cnpg_collector_up{cluster=~\"$cluster\"} == 1)",
+            "legendFormat": "Up",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 2,
+          "title": "Instances Down",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "red",   "value": 1 }
+              ]},
+              "unit": "short"
+            }
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "count(cnpg_collector_up{cluster=~\"$cluster\"} == 0) or vector(0)",
+            "legendFormat": "Down",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 3,
+          "title": "Total Active Connections",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "sum(cnpg_pg_stat_database_numbackends{cluster=~\"$cluster\"})",
+            "legendFormat": "Connections",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 4,
+          "title": "WAL Archive Failures",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "red",   "value": 1 }
+              ]},
+              "unit": "short"
+            }
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "sum(cnpg_pg_archive_command_status_failed_count{cluster=~\"$cluster\"}) or vector(0)",
+            "legendFormat": "Failures",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 5,
+          "title": "Max Replication Lag",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green",  "value": null },
+                { "color": "yellow", "value": 10 },
+                { "color": "red",    "value": 60 }
+              ]},
+              "unit": "s"
+            }
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "max(cnpg_pg_replication_lag_seconds{cluster=~\"$cluster\"}) or vector(0)",
+            "legendFormat": "Lag",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 6,
+          "title": "Operator Reconciliation Errors",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "red",   "value": 1 }
+              ]},
+              "unit": "short"
+            }
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "sum(increase(controller_runtime_reconcile_errors_total{job=\"cnpg-operator\"}[5m])) or vector(0)",
+            "legendFormat": "Errors (5m)",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 10,
+          "title": "Active Connections per Cluster",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "short" } },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "sum by (cluster, ins) (cnpg_pg_stat_database_numbackends{cluster=~\"$cluster\"})",
+            "legendFormat": "{{cluster}} ({{ins}})",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 11,
+          "title": "Transaction Rate (TPS) per Cluster",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "ops" } },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "sum by (cluster, ins) (rate(cnpg_pg_stat_database_xact_commit_total{cluster=~\"$cluster\"}[2m]) + rate(cnpg_pg_stat_database_xact_rollback_total{cluster=~\"$cluster\"}[2m]))",
+            "legendFormat": "{{cluster}} ({{ins}})",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 12,
+          "title": "Replication Lag per Instance",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s" } },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "cnpg_pg_replication_lag_seconds{cluster=~\"$cluster\"}",
+            "legendFormat": "{{cluster}} / {{pod}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 13,
+          "title": "WAL Files per Cluster",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "short" } },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "cnpg_pg_wal_files_total{cluster=~\"$cluster\"}",
+            "legendFormat": "{{cluster}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 14,
+          "title": "Database Sizes",
+          "type": "bargauge",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": { "unit": "bytes", "color": { "mode": "palette-classic" } }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "horizontal",
+            "displayMode": "gradient"
+          },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "max by (cluster, ins, datname) (cnpg_pg_database_size_size_bytes{cluster=~\"$cluster\", datname!~\"template0|template1|postgres\"})",
+            "legendFormat": "{{ins}}/{{datname}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 15,
+          "title": "Cache Hit Ratio per Cluster",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "red",    "value": null },
+                { "color": "yellow", "value": 0.9 },
+                { "color": "green",  "value": 0.95 }
+              ]}
+            }
+          },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "sum by (cluster, ins) (rate(cnpg_pg_stat_database_blks_hit_total{cluster=~\"$cluster\"}[2m])) / (sum by (cluster, ins) (rate(cnpg_pg_stat_database_blks_hit_total{cluster=~\"$cluster\"}[2m])) + sum by (cluster, ins) (rate(cnpg_pg_stat_database_blks_read_total{cluster=~\"$cluster\"}[2m])) + 1e-9)",
+            "legendFormat": "{{cluster}} ({{ins}})",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 16,
+          "title": "Operator — Reconcile Duration (p95)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s" } },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "histogram_quantile(0.95, sum by (controller, le) (rate(controller_runtime_reconcile_time_seconds_bucket{job=\"cnpg-operator\"}[5m])))",
+            "legendFormat": "{{controller}} p95",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 17,
+          "title": "Dead Tuples (top tables, all clusters)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "short" } },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": "topk(10, max by (cluster, ins, schemaname, relname) (cnpg_pg_stat_user_tables_n_dead_tup{cluster=~\"$cluster\"}))",
+            "legendFormat": "{{ins}}: {{schemaname}}.{{relname}}",
+            "refId": "A"
+          }]
+        }
+      ]
+    }

@@ -1,0 +1,298 @@
+{{- range .Values.clients }}
+{{- $ins := .ins }}
+{{- $env := .env }}
+---
+# Per-client dashboard folder for {{ $ins }} — database stats, connections, replication.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-client-{{ $ins }}
+  namespace: {{ $.Release.Namespace }}
+data:
+  database-stats.json: |
+    {
+      "title": {{ printf "PGaaS \u2014 %s \u2014 Database Stats" $ins | toJson }},
+      "uid": {{ printf "pgaas-client-%s-db" $ins | toJson }},
+      "description": {{ printf "Per-database metrics for client %s: connections, cache, TPS, deadlocks, replication." $ins | toJson }},
+      "tags": ["pgaas", "client", {{ $ins | toJson }}],
+      "schemaVersion": 39,
+      "version": 1,
+      "graphTooltip": 1,
+      "time": { "from": "now-3h", "to": "now" },
+      "refresh": "1m",
+      "templating": {
+        "list": [
+          {
+            "name": "cluster",
+            "label": "Cluster",
+            "type": "query",
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "query": {{ printf "label_values(cnpg_collector_up{ins=\"%s\"}, cluster)" $ins | toJson }},
+            "multi": true,
+            "includeAll": true,
+            "current": { "text": "All", "value": "$__all" }
+          },
+          {
+            "name": "datname",
+            "label": "Database",
+            "type": "query",
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "query": {{ printf "label_values(cnpg_pg_stat_database_numbackends{ins=\"%s\", cluster=~\"$cluster\"}, datname)" $ins | toJson }},
+            "multi": true,
+            "includeAll": true,
+            "current": { "text": "All", "value": "$__all" }
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Active Connections",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } } },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "sum(cnpg_pg_stat_database_numbackends{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"})" $ins | toJson }},
+            "legendFormat": "Connections",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 2,
+          "title": "Cache Hit Ratio",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0, "max": 1,
+              "color": { "mode": "thresholds" },
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "red",    "value": null },
+                { "color": "yellow", "value": 0.9 },
+                { "color": "green",  "value": 0.95 }
+              ]}
+            }
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "sum(rate(cnpg_pg_stat_database_blks_hit_total{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"}[2m])) / (sum(rate(cnpg_pg_stat_database_blks_hit_total{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"}[2m])) + sum(rate(cnpg_pg_stat_database_blks_read_total{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"}[2m])) + 1e-9)" $ins $ins $ins | toJson }},
+            "legendFormat": "Hit Ratio",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 3,
+          "title": "Transaction Rate (TPS)",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "ops", "color": { "mode": "palette-classic" } } },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "sum(rate(cnpg_pg_stat_database_xact_commit_total{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"}[2m]) + rate(cnpg_pg_stat_database_xact_rollback_total{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"}[2m]))" $ins $ins | toJson }},
+            "legendFormat": "TPS",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 4,
+          "title": "Deadlocks",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": { "mode": "thresholds" },
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "red",   "value": 1 }
+              ]}
+            }
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "sum(increase(cnpg_pg_stat_database_deadlocks_total{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"}[5m])) or vector(0)" $ins | toJson }},
+            "legendFormat": "Deadlocks (5m)",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 5,
+          "title": "Replication Lag",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "color": { "mode": "thresholds" },
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green",  "value": null },
+                { "color": "yellow", "value": 10 },
+                { "color": "red",    "value": 60 }
+              ]}
+            }
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "max(cnpg_pg_replication_lag_seconds{ins=\"%s\", cluster=~\"$cluster\"}) or vector(0)" $ins | toJson }},
+            "legendFormat": "Max Lag",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 6,
+          "title": "Temp Files Written",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "palette-classic" } } },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "sum(cnpg_pg_temp_files_temp_bytes{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"}) or vector(0)" $ins | toJson }},
+            "legendFormat": "Temp Bytes",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 10,
+          "title": "Active Connections by Database",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "short" } },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "cnpg_pg_stat_database_numbackends{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"}" $ins | toJson }},
+            "legendFormat": "{{datname}} ({{cluster}})",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 11,
+          "title": "Transaction Rate by Database",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "ops" } },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "rate(cnpg_pg_stat_database_xact_commit_total{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"}[2m]) + rate(cnpg_pg_stat_database_xact_rollback_total{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"}[2m])" $ins $ins | toJson }},
+            "legendFormat": "{{datname}} ({{cluster}})",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 12,
+          "title": "Cache Hit Ratio by Database",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": { "unit": "percentunit", "min": 0, "max": 1 }
+          },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "rate(cnpg_pg_stat_database_blks_hit_total{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"}[2m]) / (rate(cnpg_pg_stat_database_blks_hit_total{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"}[2m]) + rate(cnpg_pg_stat_database_blks_read_total{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"}[2m]) + 1e-9)" $ins $ins $ins | toJson }},
+            "legendFormat": "{{datname}} ({{cluster}})",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 13,
+          "title": "Replication Lag over Time",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s" } },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "cnpg_pg_replication_lag_seconds{ins=\"%s\", cluster=~\"$cluster\"}" $ins | toJson }},
+            "legendFormat": "{{cluster}} / {{pod}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 14,
+          "title": "Database Sizes",
+          "type": "bargauge",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": { "unit": "bytes", "color": { "mode": "palette-classic" } }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "horizontal",
+            "displayMode": "gradient"
+          },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "max by (cluster, datname) (cnpg_pg_database_size_size_bytes{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"})" $ins | toJson }},
+            "legendFormat": "{{datname}} ({{cluster}})",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 15,
+          "title": "Connections by State",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "short" } },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "sum by (state, datname) (cnpg_pg_activity_count{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"})" $ins | toJson }},
+            "legendFormat": "{{datname}} / {{state}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 16,
+          "title": "Dead Tuples (top tables)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "short" } },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "topk(10, cnpg_pg_stat_user_tables_n_dead_tup{ins=\"%s\", cluster=~\"$cluster\"})" $ins | toJson }},
+            "legendFormat": "{{schemaname}}.{{relname}} ({{cluster}})",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 17,
+          "title": "Max Query Duration by State",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s" } },
+          "options": { "tooltip": { "mode": "multi" } },
+          "targets": [{
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "expr": {{ printf "max by (state, datname) (cnpg_pg_activity_max_query_duration_seconds{ins=\"%s\", cluster=~\"$cluster\", datname=~\"$datname\"})" $ins | toJson }},
+            "legendFormat": "{{datname}} / {{state}}",
+            "refId": "A"
+          }]
+        }
+      ]
+    }
+{{- end }}

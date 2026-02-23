@@ -1,0 +1,20 @@
+observability:
+  prometheus:
+    retention: 15d
+    storage:
+      size: 10Gi
+      storageClass: standard
+
+  grafana:
+    adminPassword: admin
+    ingress:
+      enabled: false
+      host: ""
+
+  otelCollector:
+    scrape:
+      interval: 30s
+      tls: false          # matches monitoring.tls in postgresql.yaml (HTTP for local)
+    # Adjust this endpoint if the CNPG operator is installed elsewhere
+    operatorEndpoint: "http://cnpg-controller-manager-metrics-service.cnpg-system.svc.cluster.local:8080"
+    operatorTls: false    # operator metrics default to HTTP

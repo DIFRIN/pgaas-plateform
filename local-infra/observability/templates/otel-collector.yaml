@@ -1,0 +1,196 @@
+---
+# RBAC — ClusterRole to discover CNPG pods across all namespaces (k8s_sd).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pgaas-otel-collector
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints", "namespaces", "nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pgaas-otel-collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pgaas-otel-collector
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: {{ .Release.Namespace }}
+---
+# OTel Collector configuration.
+# prometheus receiver: scrapes CNPG built-in exporter (:9187) via k8s pod discovery.
+# Relabeling adds cluster/ins/env/role labels from CNPG pod labels.
+# prometheusremotewrite exporter: pushes to Prometheus remote_write endpoint.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: {{ .Release.Namespace }}
+data:
+  config.yaml: |
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+
+            # --- CNPG instance metrics (built-in exporter, port 9187) ---
+            - job_name: cnpg-instances
+              scrape_interval: {{ .Values.otelCollector.scrape.interval }}
+              kubernetes_sd_configs:
+                - role: pod
+              {{- if .Values.otelCollector.scrape.tls }}
+              scheme: https
+              tls_config:
+                insecure_skip_verify: true   # server cert CN is the service name, not the pod IP
+              {{- end }}
+              relabel_configs:
+                # Only keep pods that belong to a CNPG cluster
+                - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+                  action: keep
+                  regex: .+
+                # Only scrape containers exposing the named port "metrics"
+                - source_labels: [__meta_kubernetes_pod_container_port_name]
+                  action: keep
+                  regex: metrics
+                # Propagate CNPG / PGaaS labels as metric labels
+                - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+                  target_label: cluster
+                - source_labels: [__meta_kubernetes_pod_label_pgaas_io_ins]
+                  target_label: ins
+                - source_labels: [__meta_kubernetes_pod_label_pgaas_io_env]
+                  target_label: env
+                - source_labels: [__meta_kubernetes_pod_label_cnpg_io_instanceRole]
+                  target_label: role
+                - source_labels: [__meta_kubernetes_namespace]
+                  target_label: namespace
+                - source_labels: [__meta_kubernetes_pod_name]
+                  target_label: pod
+
+            # --- CNPG operator metrics (kubebuilder default, port 8080) ---
+            - job_name: cnpg-operator
+              scrape_interval: {{ .Values.otelCollector.scrape.interval }}
+              static_configs:
+                - targets:
+                    - {{ trimPrefix "http://" (trimPrefix "https://" .Values.otelCollector.operatorEndpoint) }}
+              {{- if .Values.otelCollector.operatorTls }}
+              scheme: https
+              tls_config:
+                insecure_skip_verify: true
+              {{- end }}
+              relabel_configs:
+                - target_label: job
+                  replacement: cnpg-operator
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+    processors:
+      # Batch metrics before sending to reduce remote_write calls
+      batch:
+        timeout: 10s
+        send_batch_size: 1000
+
+      # Ensure all metrics carry a service.namespace resource attribute
+      resource:
+        attributes:
+          - key: service.namespace
+            value: pgaas
+            action: upsert
+
+    exporters:
+      prometheusremotewrite:
+        endpoint: "http://prometheus.{{ .Release.Namespace }}.svc.cluster.local:9090/api/v1/write"
+        tls:
+          insecure: true
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        metrics:
+          receivers:  [prometheus]
+          processors: [resource, batch]
+          exporters:  [prometheusremotewrite]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: otel-collector
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/component: pgaas-observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+        app.kubernetes.io/name: otel-collector
+        app.kubernetes.io/component: pgaas-observability
+    spec:
+      serviceAccountName: otel-collector
+      containers:
+        - name: otel-collector
+          image: {{ .Values.otelCollector.image }}
+          args:
+            - --config=/etc/otelcol/config.yaml
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
+            - name: prometheus
+              containerPort: 8888   # collector self-metrics
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133   # health_check extension default
+            initialDelaySeconds: 10
+          resources:
+            {{- toYaml .Values.otelCollector.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: otel-collector
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/component: pgaas-observability
+spec:
+  selector:
+    app: otel-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+    - name: metrics
+      port: 8888
+      targetPort: 8888

@@ -1,0 +1,156 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.customQueries }}
+# Custom monitoring queries injected into the CNPG built-in exporter.
+# Metrics are prefixed cnpg_<query_name>_<column_name>.
+# The label cnpg.io/reload on the ConfigMap allows live reload without restart.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "pgaas.clusterName" . }}-monitoring-queries
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "pgaas.labels" . | nindent 4 }}
+    cnpg.io/reload: ""
+data:
+  queries.yaml: |
+    # --- Extended database statistics ---
+    pg_database_size:
+      query: >
+        SELECT datname,
+               pg_database_size(datname) AS size_bytes
+        FROM pg_database
+        WHERE datname NOT IN ('template0','template1','postgres')
+      metrics:
+        - datname:
+            usage: LABEL
+            description: "Database name"
+        - size_bytes:
+            usage: GAUGE
+            description: "Database size in bytes"
+
+    # --- Connection activity by database and state ---
+    pg_activity:
+      query: >
+        SELECT datname,
+               state,
+               COUNT(*) AS count,
+               MAX(EXTRACT(EPOCH FROM (now() - query_start))) AS max_query_duration_seconds
+        FROM pg_stat_activity
+        WHERE state IS NOT NULL AND datname IS NOT NULL
+        GROUP BY datname, state
+      metrics:
+        - datname:
+            usage: LABEL
+            description: "Database name"
+        - state:
+            usage: LABEL
+            description: "Connection state (active, idle, idle in transaction, etc.)"
+        - count:
+            usage: GAUGE
+            description: "Number of connections in this state"
+        - max_query_duration_seconds:
+            usage: GAUGE
+            description: "Longest running query in this state (seconds)"
+
+    # --- User table health (vacuuming, bloat) ---
+    pg_stat_user_tables:
+      query: >
+        SELECT schemaname,
+               relname,
+               n_live_tup,
+               n_dead_tup,
+               n_mod_since_analyze,
+               COALESCE(EXTRACT(EPOCH FROM (now() - last_autovacuum)), -1)    AS seconds_since_autovacuum,
+               COALESCE(EXTRACT(EPOCH FROM (now() - last_autoanalyze)), -1)   AS seconds_since_autoanalyze,
+               autovacuum_count,
+               autoanalyze_count
+        FROM pg_stat_user_tables
+      metrics:
+        - schemaname:
+            usage: LABEL
+            description: "Schema name"
+        - relname:
+            usage: LABEL
+            description: "Table name"
+        - n_live_tup:
+            usage: GAUGE
+            description: "Estimated number of live rows"
+        - n_dead_tup:
+            usage: GAUGE
+            description: "Estimated number of dead rows"
+        - n_mod_since_analyze:
+            usage: GAUGE
+            description: "Rows modified since last analyze"
+        - seconds_since_autovacuum:
+            usage: GAUGE
+            description: "Seconds since last autovacuum (-1 if never)"
+        - seconds_since_autoanalyze:
+            usage: GAUGE
+            description: "Seconds since last autoanalyze (-1 if never)"
+        - autovacuum_count:
+            usage: COUNTER
+            description: "Number of autovacuums on this table"
+        - autoanalyze_count:
+            usage: COUNTER
+            description: "Number of autoanalyzes on this table"
+
+    # --- Replication lag (primary view, seconds behind primary) ---
+    pg_replication:
+      query: >
+        SELECT CASE
+          WHEN NOT pg_is_in_recovery() THEN 0
+          ELSE GREATEST(0, EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())))
+        END AS lag_seconds,
+        pg_is_in_recovery()::int AS is_replica
+      metrics:
+        - lag_seconds:
+            usage: GAUGE
+            description: "Replication lag in seconds (0 on primary)"
+        - is_replica:
+            usage: GAUGE
+            description: "1 if this instance is a replica, 0 if primary"
+
+    # --- Replication slots (primary view) ---
+    pg_replication_slots_detail:
+      query: >
+        SELECT slot_name,
+               plugin,
+               slot_type,
+               active::int             AS active,
+               COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn), 0) AS flush_lag_bytes
+        FROM pg_replication_slots
+      metrics:
+        - slot_name:
+            usage: LABEL
+            description: "Replication slot name"
+        - plugin:
+            usage: LABEL
+            description: "Logical decoding plugin"
+        - slot_type:
+            usage: LABEL
+            description: "Slot type (physical/logical)"
+        - active:
+            usage: GAUGE
+            description: "1 if slot is active"
+        - flush_lag_bytes:
+            usage: GAUGE
+            description: "Bytes not yet flushed by consumer (logical slots)"
+
+    # --- Temp file usage ---
+    pg_temp_files:
+      query: >
+        SELECT datname,
+               temp_files,
+               temp_bytes
+        FROM pg_stat_database
+        WHERE datname NOT IN ('template0','template1','postgres')
+      metrics:
+        - datname:
+            usage: LABEL
+            description: "Database name"
+        - temp_files:
+            usage: COUNTER
+            description: "Temp files created"
+        - temp_bytes:
+            usage: COUNTER
+            description: "Temp file bytes written"
+{{- end }}

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: pgaas-observability
+description: >
+  PGaaS local observability stack.
+  Deploys Prometheus (remote-write receiver), OpenTelemetry Collector
+  (scrapes CNPG built-in exporter + operator metrics via k8s discovery),
+  and Grafana (admin + per-client dashboard folders).
+type: application
+version: 0.1.0
